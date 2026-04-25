@@ -107,6 +107,17 @@ export const similarCreativeSchema = z.object({
   similarity: z.number(),
 });
 
+export const simulatedDecayCurveSchema = z.object({
+  variantId: z.string(),
+  ctrCurve: z.array(z.number()).length(14),
+  cvrCurve: z.array(z.number()).length(14),
+  bandLow: z.array(z.number()).length(14),
+  bandHigh: z.array(z.number()).length(14),
+  fatiguePredictionDay: z.number().int().min(1).max(14),
+  fatigueConfidence: z.enum(["low", "medium", "high"]),
+  modelParams: z.record(z.string(), z.number()),
+});
+
 export const evidencePackSchema = z.object({
   variantId: z.string(),
   variantLabel: z.string(),
@@ -116,6 +127,7 @@ export const evidencePackSchema = z.object({
   similarCreatives: z.array(similarCreativeSchema),
   facts: z.array(z.string()),
   warnings: z.array(z.string()),
+  decayCurve: simulatedDecayCurveSchema.optional(),
 });
 
 export const agentReviewSchema = z.object({
@@ -146,6 +158,7 @@ export const variantAnalysisSchema = z.object({
   topReasons: z.array(z.string()),
   risks: z.array(z.string()),
   recommendedEdits: z.array(z.string()),
+  fatiguePredictionDay: z.number().int().min(1).max(14).optional(),
 });
 
 export const finalReportSchema = z.object({
@@ -191,6 +204,7 @@ export type CreativeDoc = z.infer<typeof creativeDocSchema>;
 export type MetricsSummary = z.infer<typeof metricsSummarySchema>;
 export type Benchmark = z.infer<typeof benchmarkSchema>;
 export type SimilarCreative = z.infer<typeof similarCreativeSchema>;
+export type SimulatedDecayCurve = z.infer<typeof simulatedDecayCurveSchema>;
 export type EvidencePack = z.infer<typeof evidencePackSchema>;
 export type AgentReview = z.infer<typeof agentReviewSchema>;
 export type VariantAnalysis = z.infer<typeof variantAnalysisSchema>;

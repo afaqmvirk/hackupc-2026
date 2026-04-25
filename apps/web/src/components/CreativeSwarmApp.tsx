@@ -21,8 +21,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { AgentReview, CampaignBrief, CopilotAnswer, CreativeDoc, EvidencePack, FinalReport } from "@/lib/schemas";
+import { Bar, BarChart, CartesianGrid, ComposedChart, Area, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import type { AgentReview, CampaignBrief, CopilotAnswer, CreativeDoc, EvidencePack, FinalReport, SimulatedDecayCurve } from "@/lib/schemas";
 import { cn, formatNumber, formatPct } from "@/lib/utils";
 
 type Catalog = {
@@ -41,6 +41,7 @@ type SwarmMessage =
   | { id: string; type: "status"; message: string }
   | { id: string; type: "agent"; review: AgentReview }
   | { id: string; type: "evidence"; pack: EvidencePack }
+  | { id: string; type: "decay"; curves: SimulatedDecayCurve[] }
   | { id: string; type: "error"; message: string };
 
 const defaultBrief: CampaignBrief = {
@@ -59,6 +60,7 @@ export function CreativeSwarmApp() {
   const [uploadedCreatives, setUploadedCreatives] = useState<CreativeDoc[]>([]);
   const [messages, setMessages] = useState<SwarmMessage[]>([]);
   const [report, setReport] = useState<FinalReport | null>(null);
+  const [decayCurves, setDecayCurves] = useState<SimulatedDecayCurve[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +164,7 @@ export function CreativeSwarmApp() {
     setError(null);
     setReport(null);
     setMessages([]);
+    setDecayCurves([]);
     setIsAnalyzing(true);
 
     try {
@@ -204,6 +207,9 @@ export function CreativeSwarmApp() {
           const event = JSON.parse(line);
           if (event.type === "report") {
             setReport(event.report);
+          } else if (event.type === "decay") {
+            setDecayCurves(event.curves);
+            setMessages((current) => [...current, { id: crypto.randomUUID(), ...event }]);
           } else if (event.type === "error") {
             setError(event.message);
             setMessages((current) => [...current, { id: crypto.randomUUID(), type: "error", message: event.message }]);
@@ -278,7 +284,7 @@ export function CreativeSwarmApp() {
               toggleCreative={toggleCreative}
             />
             <SwarmRoom messages={messages} isAnalyzing={isAnalyzing} />
-            <ResultsDashboard report={report} creatives={selectedCreatives} brief={brief} />
+            <ResultsDashboard report={report} creatives={selectedCreatives} brief={brief} decayCurves={decayCurves} />
           </div>
         </section>
       </div>
@@ -524,6 +530,19 @@ function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnal
                     <p className="mt-2 text-sm text-pp-white">{message.pack.facts[1]}</p>
                     <p className="mt-2 text-xs text-pp-muted">{message.pack.benchmark.contextLabel}</p>
                   </>
+                ) : message.type === "decay" ? (
+                  <>
+                    <div className="flex items-center gap-2 text-xs font-semibold text-pp-violet">
+                      <FlaskConical className="size-3.5" />
+                      Decay simulation complete
+                    </div>
+                    <p className="mt-2 text-sm text-pp-white">
+                      {message.curves.length} variant{message.curves.length !== 1 ? "s" : ""} simulated over 14 days.
+                    </p>
+                    <p className="mt-2 text-xs text-pp-muted">
+                      Earliest fatigue: Day {Math.min(...message.curves.map((c) => c.fatiguePredictionDay))}
+                    </p>
+                  </>
                 ) : message.type === "error" ? (
                   <p className="text-sm text-pp-error">{message.message}</p>
                 ) : (
@@ -540,7 +559,17 @@ function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnal
   );
 }
 
-function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | null; creatives: CreativeDoc[]; brief: CampaignBrief }) {
+function ResultsDashboard({
+  report,
+  creatives,
+  brief,
+  decayCurves,
+}: {
+  report: FinalReport | null;
+  creatives: CreativeDoc[];
+  brief: CampaignBrief;
+  decayCurves: SimulatedDecayCurve[];
+}) {
   if (!report) {
     return (
       <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
@@ -563,6 +592,11 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
 
   return (
     <section className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+      {decayCurves.length > 0 && (
+        <div className="xl:col-span-2">
+          <FatigueGraph curves={decayCurves} creatives={creatives} />
+        </div>
+      )}
       <div className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
         <div className="mb-4 flex items-center gap-2">
           <BarChart3 className="size-4 text-pp-violet" />
@@ -685,6 +719,146 @@ function CopilotPanel({ report, creatives, brief }: { report: FinalReport; creat
           <p className="mt-2 font-medium text-pp-white">{answer.nextAction}</p>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+const VARIANT_COLORS = ["#7b3ff2", "#e040fb", "#00bcd4", "#ff7043", "#66bb6a", "#ffa726"] as const;
+
+type FatigueChartRow = {
+  day: number;
+  [key: string]: number;
+};
+
+function FatigueGraph({ curves, creatives }: { curves: SimulatedDecayCurve[]; creatives: CreativeDoc[] }) {
+  const chartData: FatigueChartRow[] = Array.from({ length: 14 }, (_, i) => {
+    const day = i + 1;
+    const row: FatigueChartRow = { day };
+    for (const curve of curves) {
+      const label = labelFor(curve.variantId, creatives);
+      row[`${label}_ctr`] = parseFloat((curve.ctrCurve[i] * 100).toFixed(4));
+      row[`${label}_low`] = parseFloat((curve.bandLow[i] * 100).toFixed(4));
+      row[`${label}_high`] = parseFloat((curve.bandHigh[i] * 100).toFixed(4));
+    }
+    return row;
+  });
+
+  const earliestFatigueDay = Math.min(...curves.map((c) => c.fatiguePredictionDay));
+
+  return (
+    <section className="rounded-[16px] border border-pp-purple/30 bg-pp-panel p-4 shadow-panel">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="size-4 text-pp-violet" />
+          <h2 className="text-sm font-semibold text-pp-white">14-Day Fatigue Prediction</h2>
+        </div>
+        <div className="flex items-center gap-2 rounded-[8px] border border-pp-error/30 bg-pp-error/10 px-3 py-1 text-xs font-semibold text-pp-error">
+          <ShieldAlert className="size-3.5" />
+          Earliest fatigue: Day {earliestFatigueDay}
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-3">
+        {curves.map((curve, index) => {
+          const label = labelFor(curve.variantId, creatives);
+          const color = VARIANT_COLORS[index % VARIANT_COLORS.length];
+          return (
+            <div key={curve.variantId} className="flex items-center gap-2 text-xs text-pp-secondary">
+              <span className="inline-block size-2.5 rounded-full" style={{ backgroundColor: color }} />
+              {label}
+              <Badge>Day {curve.fatiguePredictionDay}</Badge>
+              <span className="text-pp-muted capitalize">{curve.fatigueConfidence} confidence</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="h-72">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(199,183,255,0.08)" />
+            <XAxis
+              dataKey="day"
+              tickFormatter={(v: number) => `D${v}`}
+              tick={{ fontSize: 11, fill: "#8e87a6" }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tickFormatter={(v: number) => `${v.toFixed(2)}%`}
+              tick={{ fontSize: 11, fill: "#8e87a6" }}
+              axisLine={false}
+              tickLine={false}
+              width={52}
+            />
+            <Tooltip
+              formatter={(value, name) => [typeof value === "number" ? `${value.toFixed(3)}%` : String(value), String(name)]}
+              contentStyle={{ backgroundColor: "#111626", borderColor: "rgba(199,183,255,0.14)", borderRadius: "10px", color: "#f6f6fb" }}
+              labelFormatter={(label) => `Day ${label}`}
+              labelStyle={{ color: "#c7b7ff", fontWeight: 600 }}
+              itemStyle={{ color: "#c9c3dd" }}
+            />
+
+            {curves.map((curve, index) => {
+              const label = labelFor(curve.variantId, creatives);
+              const color = VARIANT_COLORS[index % VARIANT_COLORS.length];
+              return [
+                <Area
+                  key={`${curve.variantId}_band`}
+                  dataKey={`${label}_high`}
+                  fill={color}
+                  fillOpacity={0.08}
+                  stroke="none"
+                  legendType="none"
+                  tooltipType="none"
+                  activeDot={false}
+                  isAnimationActive={false}
+                />,
+                <Area
+                  key={`${curve.variantId}_low`}
+                  dataKey={`${label}_low`}
+                  fill={color}
+                  fillOpacity={0}
+                  stroke="none"
+                  legendType="none"
+                  tooltipType="none"
+                  activeDot={false}
+                  isAnimationActive={false}
+                />,
+                <Line
+                  key={`${curve.variantId}_ctr`}
+                  dataKey={`${label}_ctr`}
+                  stroke={color}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, fill: color }}
+                  name={`${label} CTR`}
+                />,
+              ];
+            })}
+
+            {curves.map((curve) => (
+              <ReferenceLine
+                key={`fatigue_${curve.variantId}`}
+                x={curve.fatiguePredictionDay}
+                stroke="#ef4444"
+                strokeDasharray="4 3"
+                strokeWidth={1.5}
+                label={{
+                  value: `↓30% D${curve.fatiguePredictionDay}`,
+                  position: "insideTopRight",
+                  fontSize: 10,
+                  fill: "#ef4444",
+                }}
+              />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      <p className="mt-3 text-xs text-pp-muted">
+        Shaded band = p10–p90 Monte Carlo confidence interval (n=1,000). Dashed red line = predicted &gt;30% CTR drop threshold.
+      </p>
     </section>
   );
 }

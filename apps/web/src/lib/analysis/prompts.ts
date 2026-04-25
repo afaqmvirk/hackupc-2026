@@ -20,7 +20,7 @@ export const swarmAgents: SwarmAgent[] = [
   {
     name: "Fatigue Analyst",
     type: "specialist",
-    role: "Estimate whether the creative will decay quickly, using novelty, similarity, and historical fatigue signs.",
+    role: "Read the quantitative `decayCurve` in the evidence pack. Anchor your analysis on `fatiguePredictionDay` (the stochastically simulated day CTR drops >30%). Map Day ≤5 → fatigueRisk=high, Day 6–10 → medium, Day >10 → low. In `reasoning`, cite the exact day, the visual traits driving decay (textDensity, visualClutter, noveltyScore), and propose one concrete creative intervention to extend the curve.",
   },
   {
     name: "Localization Agent",
@@ -68,6 +68,10 @@ export function aggregatorPrompt(packs: EvidencePack[], reviews: unknown[]) {
     "Pick one winner. Every ranking item must map to an actual variantId from the evidence packs.",
     "Actions must be one of: scale, test, edit, pivot, pause.",
     "Return practical, concrete recommendations.",
+    "",
+    "STOCHASTIC DECAY SIGNAL: Each evidence pack may contain a `decayCurve` block with a Weibull-simulated 14-day CTR projection.",
+    "When present, use `decayCurve.fatiguePredictionDay` as a hard signal: variants predicted to fatigue before Day 7 must have this risk surfaced in their `risks` array with the exact day (e.g., 'Simulation predicts >30% CTR drop by Day 5').",
+    "Variants with earlier fatigue days should rank lower unless their peak CTR is significantly superior.",
     "",
     `Evidence packs:\n${JSON.stringify(packs, null, 2)}`,
     "",

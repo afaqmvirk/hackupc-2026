@@ -3,6 +3,7 @@ import { agentReviewJsonSchema, finalReportJsonSchema } from "@/lib/analysis/jso
 import { generateJson } from "@/lib/analysis/gemini";
 import { agentPrompt, aggregatorPrompt, swarmAgents } from "@/lib/analysis/prompts";
 import { buildEvidencePack } from "@/lib/data/retrieval";
+import { simulateDecay } from "@/lib/analysis/decay";
 import {
   agentReviewSchema,
   finalReportSchema,
@@ -11,12 +12,14 @@ import {
   type CreativeDoc,
   type EvidencePack,
   type FinalReport,
+  type SimulatedDecayCurve,
 } from "@/lib/schemas";
 
 export type SwarmEvent =
   | { type: "status"; message: string }
   | { type: "evidence"; pack: EvidencePack }
   | { type: "agent"; review: AgentReview }
+  | { type: "decay"; curves: SimulatedDecayCurve[] }
   | { type: "report"; report: FinalReport };
 
 export async function analyzeExperimentWithSwarm({
@@ -30,14 +33,29 @@ export async function analyzeExperimentWithSwarm({
 }) {
   const evidencePacks: EvidencePack[] = [];
   const reviews: AgentReview[] = [];
+  const decayCurves: SimulatedDecayCurve[] = [];
 
-  onEvent?.({ type: "status", message: "Building evidence packs from creative metadata, benchmarks, and similar ads." });
+  onEvent?.({ type: "status", message: "Building evidence packs and running stochastic decay simulations." });
 
   for (let index = 0; index < variants.length; index += 1) {
-    const pack = await buildEvidencePack(variants[index], brief, index);
-    evidencePacks.push(pack);
-    await onEvent?.({ type: "evidence", pack });
+    // Run RAG evidence build and Python decay simulation in parallel per variant
+    const [pack, curve] = await Promise.all([
+      buildEvidencePack(variants[index], brief, index),
+      simulateDecay(variants[index]),
+    ]);
+
+    const enrichedPack: EvidencePack = { ...pack, decayCurve: curve };
+    decayCurves.push(curve);
+
+    evidencePacks.push(enrichedPack);
+    await onEvent?.({ type: "evidence", pack: enrichedPack });
   }
+
+  await onEvent?.({ type: "decay", curves: decayCurves });
+  onEvent?.({
+    type: "status",
+    message: `Decay simulation complete. Earliest fatigue predicted on Day ${Math.min(...decayCurves.map((c) => c.fatiguePredictionDay))}.`,
+  });
 
   onEvent?.({ type: "status", message: "Gemini swarm agents are reviewing each variant." });
 
@@ -56,7 +74,7 @@ export async function analyzeExperimentWithSwarm({
 
   onEvent?.({ type: "status", message: "Aggregator is ranking variants and writing the A/B test plan." });
 
-  const report = await generateJson({
+  const rawReport = await generateJson({
     model: config.aggregatorModel,
     prompt: aggregatorPrompt(evidencePacks, reviews),
     schema: finalReportJsonSchema,
@@ -64,11 +82,17 @@ export async function analyzeExperimentWithSwarm({
     temperature: 0.25,
   });
 
+  // Deterministically merge Python-computed fatiguePredictionDay into ranking.
+  // We never ask Gemini to re-derive numeric simulation outputs.
+  const report: FinalReport = {
+    ...rawReport,
+    ranking: rawReport.ranking.map((item) => {
+      const curve = decayCurves.find((c) => c.variantId === item.variantId);
+      return curve ? { ...item, fatiguePredictionDay: curve.fatiguePredictionDay } : item;
+    }),
+  };
+
   await onEvent?.({ type: "report", report });
 
-  return {
-    evidencePacks,
-    reviews,
-    report,
-  };
+  return { evidencePacks, reviews, report, decayCurves };
 }
