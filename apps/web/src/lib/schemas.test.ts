@@ -1,0 +1,104 @@
+import { describe, expect, it } from "vitest";
+import { agentReviewSchema, finalReportSchema } from "@/lib/schemas";
+
+const behavior = {
+  primaryState: "click",
+  probabilities: {
+    skip: 0.2,
+    ignore: 0.2,
+    inspect: 0.2,
+    click: 0.2,
+    convert: 0.2,
+    exit: 0.2,
+  },
+  confidence: "medium",
+  rationale: "The CTA is clear enough to earn a tap, but conversion is not guaranteed.",
+};
+
+describe("behavior schemas", () => {
+  it("normalizes agent behavior probabilities", () => {
+    const review = agentReviewSchema.parse({
+      agentName: "Practical Converter",
+      agentType: "persona",
+      variantId: "variant_a",
+      attention: 7,
+      clarity: 7,
+      trust: 6,
+      conversionIntent: 6,
+      fatigueRisk: "medium",
+      recommendation: "test",
+      behavior,
+      topPositive: "Clear CTA.",
+      topConcern: "Offer details are thin.",
+      suggestedEdit: "Make the post-click value clearer.",
+      reasoning: "The creative is understandable and action-oriented.",
+      evidenceRefs: ["fact:CTA"],
+    });
+
+    const total = Object.values(review.behavior.probabilities).reduce((sum, value) => sum + value, 0);
+    expect(total).toBeCloseTo(1, 3);
+  });
+
+  it("rejects unknown behavior states", () => {
+    expect(() =>
+      agentReviewSchema.parse({
+        agentName: "Skeptical User",
+        agentType: "persona",
+        variantId: "variant_a",
+        attention: 5,
+        clarity: 5,
+        trust: 4,
+        conversionIntent: 3,
+        fatigueRisk: "high",
+        recommendation: "edit",
+        behavior: { ...behavior, primaryState: "linger" },
+        topPositive: "Some offer value is visible.",
+        topConcern: "Trust is weak.",
+        suggestedEdit: "Clarify the offer.",
+        reasoning: "The behavior state is invalid.",
+        evidenceRefs: [],
+      }),
+    ).toThrow();
+  });
+
+  it("accepts final ranking behavior summaries", () => {
+    const report = finalReportSchema.parse({
+      winner: "variant_a",
+      executiveSummary: "Variant A is the best pre-test candidate.",
+      ranking: [
+        {
+          variantId: "variant_a",
+          rank: 1,
+          score: 72,
+          predictedOutcome: "Likely above baseline.",
+          creativeHealth: 74,
+          swarmConfidence: "medium",
+          action: "test",
+          dominantBehaviorState: "click",
+          behaviorProbabilities: behavior.probabilities,
+          behaviorSummary: "Simulated users are most likely to click after inspecting the CTA.",
+          topReasons: ["Clear CTA"],
+          risks: ["Moderate fatigue risk"],
+          recommendedEdits: ["Clarify terms"],
+        },
+      ],
+      champion: "Variant A",
+      whyItWins: ["Clear CTA"],
+      risks: ["Moderate fatigue risk"],
+      whatToDoNext: ["Run a controlled test"],
+      abTestPlan: {
+        primaryMetric: "CVR",
+        secondaryMetric: "CTR",
+        control: "Variant A",
+        challenger: "Variant B",
+        trafficSplit: "50/50",
+        hypothesis: "Clearer CTA improves conversion.",
+        stopCondition: "Stop after minimum spend.",
+        actionIfWinner: "Scale",
+        actionIfLoser: "Edit",
+      },
+    });
+
+    expect(report.ranking[0].dominantBehaviorState).toBe("click");
+  });
+});

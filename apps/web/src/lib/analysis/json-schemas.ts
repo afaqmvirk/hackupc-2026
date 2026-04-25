@@ -1,3 +1,18 @@
+const behaviorStateEnum = ["skip", "ignore", "inspect", "click", "convert", "exit"];
+
+const behaviorProbabilitiesJsonSchema = {
+  type: "object",
+  required: ["skip", "ignore", "inspect", "click", "convert", "exit"],
+  properties: {
+    skip: { type: "number", minimum: 0, maximum: 1 },
+    ignore: { type: "number", minimum: 0, maximum: 1 },
+    inspect: { type: "number", minimum: 0, maximum: 1 },
+    click: { type: "number", minimum: 0, maximum: 1 },
+    convert: { type: "number", minimum: 0, maximum: 1 },
+    exit: { type: "number", minimum: 0, maximum: 1 },
+  },
+};
+
 export const agentReviewJsonSchema = {
   type: "object",
   required: [
@@ -10,6 +25,7 @@ export const agentReviewJsonSchema = {
     "conversionIntent",
     "fatigueRisk",
     "recommendation",
+    "behavior",
     "topPositive",
     "topConcern",
     "suggestedEdit",
@@ -26,6 +42,16 @@ export const agentReviewJsonSchema = {
     conversionIntent: { type: "number", minimum: 0, maximum: 10 },
     fatigueRisk: { type: "string", enum: ["low", "medium", "high"] },
     recommendation: { type: "string", enum: ["scale", "test", "edit", "pivot", "pause"] },
+    behavior: {
+      type: "object",
+      required: ["primaryState", "probabilities", "confidence", "rationale"],
+      properties: {
+        primaryState: { type: "string", enum: behaviorStateEnum },
+        probabilities: behaviorProbabilitiesJsonSchema,
+        confidence: { type: "string", enum: ["low", "medium", "high"] },
+        rationale: { type: "string" },
+      },
+    },
     topPositive: { type: "string" },
     topConcern: { type: "string" },
     suggestedEdit: { type: "string" },
@@ -64,6 +90,9 @@ export const finalReportJsonSchema = {
           "creativeHealth",
           "swarmConfidence",
           "action",
+          "dominantBehaviorState",
+          "behaviorProbabilities",
+          "behaviorSummary",
           "topReasons",
           "risks",
           "recommendedEdits",
@@ -76,6 +105,9 @@ export const finalReportJsonSchema = {
           creativeHealth: { type: "number", minimum: 0, maximum: 100 },
           swarmConfidence: { type: "string", enum: ["low", "medium", "high"] },
           action: { type: "string", enum: ["scale", "test", "edit", "pivot", "pause"] },
+          dominantBehaviorState: { type: "string", enum: behaviorStateEnum },
+          behaviorProbabilities: behaviorProbabilitiesJsonSchema,
+          behaviorSummary: { type: "string" },
           topReasons: { type: "array", items: { type: "string" } },
           risks: { type: "array", items: { type: "string" } },
           recommendedEdits: { type: "array", items: { type: "string" } },

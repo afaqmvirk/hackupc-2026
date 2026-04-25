@@ -88,8 +88,76 @@ export const benchmarkSchema = z.object({
   avgCtr: z.number().nullable(),
   avgCvr: z.number().nullable(),
   avgPerfScore: z.number().nullable(),
+  avgCtrDecayPct: z.number().nullable(),
   highPerformerCount: z.number(),
   fatiguedCount: z.number(),
+  underperformerCount: z.number(),
+  stableCount: z.number(),
+  topPerformerRate: z.number().min(0).max(1),
+  underperformerRate: z.number().min(0).max(1),
+  fatiguedRate: z.number().min(0).max(1),
+  stableRate: z.number().min(0).max(1),
+});
+
+export const behaviorStates = ["skip", "ignore", "inspect", "click", "convert", "exit"] as const;
+
+const rawBehaviorProbabilitiesSchema = z.object({
+  skip: z.number().min(0).max(1),
+  ignore: z.number().min(0).max(1),
+  inspect: z.number().min(0).max(1),
+  click: z.number().min(0).max(1),
+  convert: z.number().min(0).max(1),
+  exit: z.number().min(0).max(1),
+});
+
+export type RawBehaviorProbabilities = z.infer<typeof rawBehaviorProbabilitiesSchema>;
+export type BehaviorState = (typeof behaviorStates)[number];
+
+export function normalizeBehaviorProbabilities(
+  probabilities: RawBehaviorProbabilities,
+  fallbackState: BehaviorState = "ignore",
+): RawBehaviorProbabilities {
+  const clamped = Object.fromEntries(
+    behaviorStates.map((state) => [state, Math.min(Math.max(probabilities[state] ?? 0, 0), 1)]),
+  ) as RawBehaviorProbabilities;
+  const total = behaviorStates.reduce((sum, state) => sum + clamped[state], 0);
+
+  if (total <= 0) {
+    return Object.fromEntries(behaviorStates.map((state) => [state, state === fallbackState ? 1 : 0])) as RawBehaviorProbabilities;
+  }
+
+  return Object.fromEntries(
+    behaviorStates.map((state) => [state, Number((clamped[state] / total).toFixed(4))]),
+  ) as RawBehaviorProbabilities;
+}
+
+export function dominantBehaviorState(probabilities: RawBehaviorProbabilities): BehaviorState {
+  return behaviorStates.reduce((best, state) => (probabilities[state] > probabilities[best] ? state : best), "ignore");
+}
+
+export const behaviorStateSchema = z.enum(behaviorStates);
+
+export const behaviorProbabilitiesSchema = rawBehaviorProbabilitiesSchema.transform((probabilities) =>
+  normalizeBehaviorProbabilities(probabilities),
+);
+
+export const behaviorSimulationSchema = z
+  .object({
+    primaryState: behaviorStateSchema,
+    probabilities: rawBehaviorProbabilitiesSchema,
+    confidence: z.enum(["low", "medium", "high"]),
+    rationale: z.string(),
+  })
+  .transform((behavior) => ({
+    ...behavior,
+    probabilities: normalizeBehaviorProbabilities(behavior.probabilities, behavior.primaryState),
+  }));
+
+export const behaviorPriorSchema = z.object({
+  source: z.enum(["target_history", "similar_creatives", "benchmark"]),
+  datasetSentiment: z.enum(["positive", "neutral", "negative", "fatigue_risk"]),
+  probabilityHints: behaviorProbabilitiesSchema,
+  drivers: z.array(z.string()),
 });
 
 export const similarCreativeSchema = z.object({
@@ -114,6 +182,7 @@ export const evidencePackSchema = z.object({
   creative: creativeDocSchema,
   benchmark: benchmarkSchema,
   similarCreatives: z.array(similarCreativeSchema),
+  behaviorPrior: behaviorPriorSchema,
   facts: z.array(z.string()),
   warnings: z.array(z.string()),
 });
@@ -128,6 +197,7 @@ export const agentReviewSchema = z.object({
   conversionIntent: z.number().min(0).max(10),
   fatigueRisk: z.enum(["low", "medium", "high"]),
   recommendation: z.enum(["scale", "test", "edit", "pivot", "pause"]),
+  behavior: behaviorSimulationSchema,
   topPositive: z.string(),
   topConcern: z.string(),
   suggestedEdit: z.string(),
@@ -143,6 +213,9 @@ export const variantAnalysisSchema = z.object({
   creativeHealth: z.number().min(0).max(100),
   swarmConfidence: z.enum(["low", "medium", "high"]),
   action: z.enum(["scale", "test", "edit", "pivot", "pause"]),
+  dominantBehaviorState: behaviorStateSchema,
+  behaviorProbabilities: behaviorProbabilitiesSchema,
+  behaviorSummary: z.string(),
   topReasons: z.array(z.string()),
   risks: z.array(z.string()),
   recommendedEdits: z.array(z.string()),
@@ -191,6 +264,9 @@ export type CreativeDoc = z.infer<typeof creativeDocSchema>;
 export type MetricsSummary = z.infer<typeof metricsSummarySchema>;
 export type Benchmark = z.infer<typeof benchmarkSchema>;
 export type SimilarCreative = z.infer<typeof similarCreativeSchema>;
+export type BehaviorProbabilities = z.infer<typeof behaviorProbabilitiesSchema>;
+export type BehaviorPrior = z.infer<typeof behaviorPriorSchema>;
+export type BehaviorSimulation = z.infer<typeof behaviorSimulationSchema>;
 export type EvidencePack = z.infer<typeof evidencePackSchema>;
 export type AgentReview = z.infer<typeof agentReviewSchema>;
 export type VariantAnalysis = z.infer<typeof variantAnalysisSchema>;

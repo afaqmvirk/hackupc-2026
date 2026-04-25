@@ -508,11 +508,16 @@ function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnal
               >
                 {message.type === "agent" ? (
                   <>
-                    <div className="flex items-center gap-2 text-xs font-semibold text-pp-lavender">
-                      <MessageSquareText className="size-3.5" />
-                      {message.review.agentName}
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-pp-lavender">
+                      <span className="inline-flex items-center gap-2">
+                        <MessageSquareText className="size-3.5" />
+                        {message.review.agentName}
+                      </span>
+                      <BehaviorBadge state={message.review.behavior.primaryState} />
                     </div>
                     <p className="mt-2 text-sm text-pp-white">{message.review.reasoning}</p>
+                    <p className="mt-2 text-xs text-pp-secondary">{message.review.behavior.rationale}</p>
+                    <p className="mt-2 text-xs text-pp-muted">{behaviorMix(message.review.behavior.probabilities)}</p>
                     <p className="mt-2 text-xs text-pp-muted">{message.review.suggestedEdit}</p>
                   </>
                 ) : message.type === "evidence" ? (
@@ -592,13 +597,19 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
         </div>
         <div className="mt-4 overflow-hidden rounded-[10px] border border-[var(--pp-border)]">
           {report.ranking.map((item) => (
-            <div key={item.variantId} className="grid gap-3 border-b border-[var(--pp-border)] p-3 last:border-b-0 md:grid-cols-[56px_1fr_120px_120px] md:items-center">
+            <div
+              key={item.variantId}
+              className="grid gap-3 border-b border-[var(--pp-border)] p-3 last:border-b-0 md:grid-cols-[56px_minmax(0,1fr)_120px_120px_120px] md:items-center"
+            >
               <div className="text-lg font-semibold text-pp-white">#{item.rank}</div>
               <div>
                 <p className="font-medium text-pp-white">{labelFor(item.variantId, creatives)}</p>
                 <p className="text-sm text-pp-muted">{item.predictedOutcome}</p>
+                <p className="mt-1 text-xs text-pp-secondary">{item.behaviorSummary}</p>
+                <p className="mt-1 text-xs text-pp-muted">{behaviorMix(item.behaviorProbabilities)}</p>
               </div>
               <Badge>{item.swarmConfidence} confidence</Badge>
+              <BehaviorBadge state={item.dominantBehaviorState} />
               <Badge>{item.action}</Badge>
             </div>
           ))}
@@ -740,6 +751,30 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
+function BehaviorBadge({ state }: { state: string }) {
+  return (
+    <span className="inline-flex min-h-6 items-center rounded-[6px] bg-pp-info/10 px-2 py-1 text-xs font-medium text-pp-info">
+      {humanizeBehavior(state)}
+    </span>
+  );
+}
+
+function behaviorMix(probabilities: {
+  skip: number;
+  ignore: number;
+  inspect: number;
+  click: number;
+  convert: number;
+  exit: number;
+}) {
+  return [
+    `Click ${formatBehaviorPct(probabilities.click)}`,
+    `Convert ${formatBehaviorPct(probabilities.convert)}`,
+    `Skip ${formatBehaviorPct(probabilities.skip)}`,
+    `Exit ${formatBehaviorPct(probabilities.exit)}`,
+  ].join(" · ");
+}
+
 function metric(value?: number | null) {
   if (value === undefined || value === null) return "n/a";
   return formatNumber(value, 2);
@@ -752,4 +787,27 @@ function labelFor(variantId: string, creatives: CreativeDoc[]) {
 
 function humanize(value: string) {
   return value.replace(/[A-Z]/g, (match) => ` ${match.toLowerCase()}`);
+}
+
+function humanizeBehavior(value: string) {
+  switch (value) {
+    case "skip":
+      return "Skip";
+    case "ignore":
+      return "Ignore";
+    case "inspect":
+      return "Inspect";
+    case "click":
+      return "Click";
+    case "convert":
+      return "Convert";
+    case "exit":
+      return "Exit";
+    default:
+      return value;
+  }
+}
+
+function formatBehaviorPct(value: number) {
+  return `${Math.round(value * 100)}%`;
 }
