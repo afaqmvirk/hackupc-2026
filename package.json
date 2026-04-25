@@ -1,0 +1,14 @@
+{
+  "name": "hackupc-2026",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --filter web lint",
+    "test": "pnpm --filter web test",
+    "seed": "pnpm --filter web seed",
+    "cv:dev": "python -m uvicorn services.cv.main:app --reload --port 8001"
+  }
+}
