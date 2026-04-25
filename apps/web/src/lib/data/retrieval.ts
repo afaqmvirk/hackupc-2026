@@ -135,6 +135,12 @@ export async function buildEvidencePack(variant: CreativeDoc, brief: CampaignBri
     facts.push(
       `Historical summary for this dataset creative: CTR ${formatMetric(metrics.ctr)}, CVR ${formatMetric(metrics.cvr)}, status ${metrics.creativeStatus ?? "unknown"}.`,
     );
+    if (metrics.ctrDecayPct !== undefined && metrics.ctrDecayPct !== null) {
+      const decayPct = Math.round(Math.abs(metrics.ctrDecayPct) * 100);
+      facts.push(
+        `Fatigue signals: CTR decayed ${decayPct}% from launch week to last week (first7dCTR ${formatMetric(metrics.first7dCtr)} → last7dCTR ${formatMetric(metrics.last7dCtr)}).${metrics.fatigueDay ? ` Fatigued on day ${metrics.fatigueDay}.` : " Still classified as stable."}`,
+      );
+    }
   }
 
   const warnings = [

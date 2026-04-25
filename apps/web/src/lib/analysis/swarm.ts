@@ -2,7 +2,9 @@ import { config } from "@/lib/config";
 import { agentReviewJsonSchema, finalReportJsonSchema } from "@/lib/analysis/json-schemas";
 import { generateJson } from "@/lib/analysis/gemini";
 import { agentPrompt, aggregatorPrompt, swarmAgents } from "@/lib/analysis/prompts";
+import { computeFatigueProfile } from "@/lib/analysis/fatigue";
 import { buildEvidencePack } from "@/lib/data/retrieval";
+import { getDatasetCreatives } from "@/lib/data/repository";
 import {
   agentReviewSchema,
   finalReportSchema,
@@ -64,11 +66,24 @@ export async function analyzeExperimentWithSwarm({
     temperature: 0.25,
   });
 
-  await onEvent?.({ type: "report", report });
+  // Compute deterministic fatigue profiles from dataset signals + visual features.
+  // This runs after Gemini so it never blocks the LLM pipeline.
+  onEvent?.({ type: "status", message: "Computing fatigue forecasts from historical decay signals." });
+
+  const dataset = await getDatasetCreatives();
+  const datasetLookup = new Map(dataset.map((c) => [c.id, c]));
+
+  const fatigueProfiles = variants.map((variant, index) =>
+    computeFatigueProfile(variant, evidencePacks[index], datasetLookup),
+  );
+
+  const enrichedReport: FinalReport = { ...report, fatigueProfiles };
+
+  await onEvent?.({ type: "report", report: enrichedReport });
 
   return {
     evidencePacks,
     reviews,
-    report,
+    report: enrichedReport,
   };
 }
