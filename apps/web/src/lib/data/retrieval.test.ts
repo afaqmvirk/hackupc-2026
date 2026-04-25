@@ -64,9 +64,10 @@ describe("retrieval", () => {
     const underPrior = buildBehaviorPrior(underperformer!, [], benchmark);
     const fatiguedPrior = buildBehaviorPrior(fatigued!, [], benchmark);
 
-    expect(topPrior.probabilityHints.click + topPrior.probabilityHints.convert).toBeGreaterThan(
-      topPrior.probabilityHints.skip + topPrior.probabilityHints.exit,
-    );
+    expect(topPrior.probabilityHints.click).toBeGreaterThan(underPrior.probabilityHints.click);
+    expect(topPrior.probabilityHints.convert).toBeGreaterThan(underPrior.probabilityHints.convert);
+    expect(topPrior.probabilityHints.click).toBeLessThan(0.03);
+    expect(topPrior.probabilityHints.convert).toBeLessThan(0.007);
     expect(underPrior.probabilityHints.skip + underPrior.probabilityHints.ignore + underPrior.probabilityHints.exit).toBeGreaterThan(
       underPrior.probabilityHints.click + underPrior.probabilityHints.convert,
     );

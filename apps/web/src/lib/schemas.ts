@@ -10,6 +10,8 @@ export const campaignBriefSchema = z.object({
 });
 
 export const analysisInputModeSchema = z.enum(["evidence", "image_only"]).default("evidence");
+export const defaultProjectedViews = 100000;
+export const projectedViewsSchema = z.coerce.number().int().positive().default(defaultProjectedViews);
 
 export const creativeFeaturesSchema = z.object({
   embedding: z.array(z.number()).optional(),
@@ -102,6 +104,7 @@ export const benchmarkSchema = z.object({
 });
 
 export const behaviorStates = ["skip", "ignore", "inspect", "click", "convert", "exit"] as const;
+export const personaForecastActionStates = ["skip", "click", "convert", "exit"] as const;
 
 const rawBehaviorProbabilitiesSchema = z.object({
   skip: z.number().min(0).max(1),
@@ -223,10 +226,31 @@ export const variantAnalysisSchema = z.object({
   recommendedEdits: z.array(z.string()),
 });
 
+export const expectedActionCountsSchema = z.object({
+  skip: z.number().nonnegative(),
+  click: z.number().nonnegative(),
+  convert: z.number().nonnegative(),
+  exit: z.number().nonnegative(),
+});
+
+export const personaActionForecastSchema = z.object({
+  variantId: z.string(),
+  projectedViews: projectedViewsSchema,
+  personas: z.array(
+    z.object({
+      agentName: z.string(),
+      weight: z.number().min(0).max(1),
+      expectedActions: expectedActionCountsSchema,
+    }),
+  ),
+  totals: expectedActionCountsSchema,
+});
+
 export const finalReportSchema = z.object({
   winner: z.string(),
   executiveSummary: z.string(),
   ranking: z.array(variantAnalysisSchema),
+  personaActionForecast: z.array(personaActionForecastSchema).default([]),
   champion: z.string(),
   whyItWins: z.array(z.string()),
   risks: z.array(z.string()),
@@ -254,6 +278,7 @@ export const experimentSchema = z.object({
   id: z.string(),
   brief: campaignBriefSchema,
   analysisInputMode: analysisInputModeSchema,
+  projectedViews: projectedViewsSchema,
   variants: z.array(creativeDocSchema).min(2).max(6),
   status: z.enum(["created", "analyzing", "complete", "failed"]),
   createdAt: z.string(),
@@ -274,6 +299,8 @@ export type BehaviorSimulation = z.infer<typeof behaviorSimulationSchema>;
 export type EvidencePack = z.infer<typeof evidencePackSchema>;
 export type AgentReview = z.infer<typeof agentReviewSchema>;
 export type VariantAnalysis = z.infer<typeof variantAnalysisSchema>;
+export type ExpectedActionCounts = z.infer<typeof expectedActionCountsSchema>;
+export type PersonaActionForecast = z.infer<typeof personaActionForecastSchema>;
 export type FinalReport = z.infer<typeof finalReportSchema>;
 export type CopilotAnswer = z.infer<typeof copilotAnswerSchema>;
 export type Experiment = z.infer<typeof experimentSchema>;

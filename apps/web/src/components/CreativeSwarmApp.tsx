@@ -22,7 +22,16 @@ import {
   X,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { AgentReview, AnalysisInputMode, CampaignBrief, CopilotAnswer, CreativeDoc, EvidencePack, FinalReport } from "@/lib/schemas";
+import {
+  defaultProjectedViews,
+  type AgentReview,
+  type AnalysisInputMode,
+  type CampaignBrief,
+  type CopilotAnswer,
+  type CreativeDoc,
+  type EvidencePack,
+  type FinalReport,
+} from "@/lib/schemas";
 import { cn, formatNumber, formatPct } from "@/lib/utils";
 
 type Catalog = {
@@ -52,12 +61,15 @@ const defaultBrief: CampaignBrief = {
   audienceStyle: "casual mobile users",
 };
 
+const forecastActionStates = ["skip", "click", "convert", "exit"] as const;
+
 export function CreativeSwarmApp() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [brief, setBrief] = useState<CampaignBrief>(defaultBrief);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [uploadedCreatives, setUploadedCreatives] = useState<CreativeDoc[]>([]);
   const [analysisInputMode, setAnalysisInputMode] = useState<AnalysisInputMode>("evidence");
+  const [projectedViews, setProjectedViews] = useState(defaultProjectedViews);
   const [messages, setMessages] = useState<SwarmMessage[]>([]);
   const [report, setReport] = useState<FinalReport | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -172,6 +184,7 @@ export function CreativeSwarmApp() {
         body: JSON.stringify({
           brief,
           analysisInputMode,
+          projectedViews,
           creativeIds: selectedIds,
           uploadedCreatives,
         }),
@@ -228,7 +241,7 @@ export function CreativeSwarmApp() {
     }
   };
 
-  const canAnalyze = selectedCreatives.length >= 2 && selectedCreatives.length <= 6 && !isAnalyzing;
+  const canAnalyze = selectedCreatives.length >= 2 && selectedCreatives.length <= 6 && projectedViews > 0 && !isAnalyzing;
 
   return (
     <main className="min-h-screen bg-pp-bg text-pp-white">
@@ -274,7 +287,7 @@ export function CreativeSwarmApp() {
 
         <section className="grid gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
           <aside className="flex flex-col gap-4">
-            <BriefPanel catalog={catalog} brief={brief} setBrief={setBrief} />
+            <BriefPanel catalog={catalog} brief={brief} setBrief={setBrief} projectedViews={projectedViews} setProjectedViews={setProjectedViews} />
             <SelectedPanel
               creatives={selectedCreatives}
               onRemove={(creative) => {
@@ -346,12 +359,20 @@ function BriefPanel({
   catalog,
   brief,
   setBrief,
+  projectedViews,
+  setProjectedViews,
 }: {
   catalog: Catalog | null;
   brief: CampaignBrief;
   setBrief: (brief: CampaignBrief) => void;
+  projectedViews: number;
+  setProjectedViews: (projectedViews: number) => void;
 }) {
   const update = (key: keyof CampaignBrief, value: string) => setBrief({ ...brief, [key]: value });
+  const updateProjectedViews = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    setProjectedViews(Math.max(1, Math.round(value)));
+  };
 
   return (
     <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
@@ -379,6 +400,16 @@ function BriefPanel({
           <input
             value={brief.audienceStyle ?? ""}
             onChange={(event) => update("audienceStyle", event.target.value)}
+            className="h-10 rounded-[10px] border border-[var(--pp-border-strong)] bg-[rgba(7,9,18,0.72)] px-3 text-sm text-pp-white outline-none placeholder:text-pp-muted focus:border-pp-violet focus:shadow-[0_0_0_3px_rgba(123,63,242,0.16)]"
+          />
+        </Field>
+        <Field label="Projected views">
+          <input
+            type="number"
+            min={1}
+            step={1000}
+            value={projectedViews}
+            onChange={(event) => updateProjectedViews(event.currentTarget.valueAsNumber)}
             className="h-10 rounded-[10px] border border-[var(--pp-border-strong)] bg-[rgba(7,9,18,0.72)] px-3 text-sm text-pp-white outline-none placeholder:text-pp-muted focus:border-pp-violet focus:shadow-[0_0_0_3px_rgba(123,63,242,0.16)]"
           />
         </Field>
@@ -670,6 +701,7 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
             </div>
           ))}
         </div>
+        <PersonaActionForecastPanel report={report} creatives={creatives} />
       </div>
 
       <div className="grid gap-5">
@@ -691,6 +723,75 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
             ))}
           </div>
         </section>
+      </div>
+    </section>
+  );
+}
+
+function PersonaActionForecastPanel({ report, creatives }: { report: FinalReport; creatives: CreativeDoc[] }) {
+  const forecasts = report.ranking
+    .map((item) => report.personaActionForecast.find((forecast) => forecast.variantId === item.variantId))
+    .filter((forecast): forecast is NonNullable<typeof forecast> => Boolean(forecast));
+
+  if (!forecasts.length) {
+    return null;
+  }
+
+  return (
+    <section className="mt-5 rounded-[12px] border border-[var(--pp-border)] bg-pp-elevated p-4">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-pp-white">Persona Action Forecast</h2>
+          <p className="mt-1 text-xs text-pp-muted">Expected actions from projected views and persona-weighted behavior probabilities.</p>
+        </div>
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted">
+          {formatNumber(forecasts[0]?.projectedViews)} views
+        </span>
+      </div>
+      <div className="grid gap-4">
+        {forecasts.map((forecast) => (
+          <div key={forecast.variantId} className="rounded-[10px] border border-[var(--pp-border)] bg-pp-panel/70 p-3">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="font-medium text-pp-white">{labelFor(forecast.variantId, creatives)}</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {forecastActionStates.map((action) => (
+                  <div key={action} className="rounded-[8px] bg-pp-elevated px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">{humanizeBehavior(action)}</p>
+                    <p className="text-sm font-semibold text-pp-white">{formatNumber(forecast.totals[action])}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[620px] border-collapse text-left text-xs">
+                <thead className="text-pp-muted">
+                  <tr className="border-b border-[var(--pp-border)]">
+                    <th className="py-2 pr-3 font-semibold">Persona</th>
+                    <th className="px-3 py-2 font-semibold">Weight</th>
+                    {forecastActionStates.map((action) => (
+                      <th key={action} className="px-3 py-2 font-semibold">
+                        {humanizeBehavior(action)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="text-pp-secondary">
+                  {forecast.personas.map((persona) => (
+                    <tr key={persona.agentName} className="border-b border-[var(--pp-border)] last:border-b-0">
+                      <td className="py-2 pr-3 font-medium text-pp-white">{persona.agentName}</td>
+                      <td className="px-3 py-2">{formatPct(persona.weight, 1)}</td>
+                      {forecastActionStates.map((action) => (
+                        <td key={action} className="px-3 py-2">
+                          {formatNumber(persona.expectedActions[action])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -865,5 +966,5 @@ function humanizeBehavior(value: string) {
 }
 
 function formatBehaviorPct(value: number) {
-  return `${Math.round(value * 100)}%`;
+  return `${(value * 100).toFixed(2)}%`;
 }

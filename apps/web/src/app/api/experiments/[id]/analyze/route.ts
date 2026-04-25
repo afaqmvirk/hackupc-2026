@@ -3,7 +3,7 @@ import { getExperiment, saveExperiment } from "@/lib/data/repository";
 import { experimentSchema } from "@/lib/schemas";
 import { z } from "zod";
 
-export const maxDuration = 300;
+export const maxDuration = 480;
 
 const analyzeRequestSchema = z.object({
   experiment: experimentSchema.optional(),
@@ -40,6 +40,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const result = await analyzeExperimentWithSwarm({
           brief: experiment.brief,
           analysisInputMode: experiment.analysisInputMode ?? "evidence",
+          projectedViews: experiment.projectedViews,
           variants: experiment.variants,
           onEvent: send,
         });

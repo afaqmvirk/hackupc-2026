@@ -97,12 +97,37 @@ describe("behavior schemas", () => {
         actionIfWinner: "Scale",
         actionIfLoser: "Edit",
       },
+      personaActionForecast: [
+        {
+          variantId: "variant_a",
+          projectedViews: 100000,
+          personas: [
+            {
+              agentName: "Practical Converter",
+              weight: 0.1948222679,
+              expectedActions: {
+                skip: 1948.222679,
+                click: 3896.445358,
+                convert: 9741.113395,
+                exit: 0,
+              },
+            },
+          ],
+          totals: {
+            skip: 1948.222679,
+            click: 3896.445358,
+            convert: 9741.113395,
+            exit: 0,
+          },
+        },
+      ],
     });
 
     expect(report.ranking[0].dominantBehaviorState).toBe("click");
+    expect(report.personaActionForecast[0].totals.convert).toBeGreaterThan(9000);
   });
 
-  it("defaults experiments to evidence input mode", () => {
+  it("defaults experiments to evidence input mode and projected views", () => {
     const experiment = experimentSchema.parse({
       id: "experiment_1",
       brief: {
@@ -144,5 +169,6 @@ describe("behavior schemas", () => {
     });
 
     expect(experiment.analysisInputMode).toBe("evidence");
+    expect(experiment.projectedViews).toBe(100000);
   });
 });

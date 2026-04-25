@@ -13,7 +13,7 @@ const brief = {
   audienceStyle: "casual mobile users",
 };
 
-function reviewWithBehavior(behavior: AgentReview["behavior"]): AgentReview {
+function reviewWithBehavior(behavior: AgentReview["behavior"], overrides: Partial<AgentReview> = {}): AgentReview {
   return {
     agentName: "Fatigue Analyst",
     agentType: "specialist",
@@ -30,11 +30,12 @@ function reviewWithBehavior(behavior: AgentReview["behavior"]): AgentReview {
     suggestedEdit: "Clarify the message.",
     reasoning: "Mock review.",
     evidenceRefs: [],
+    ...overrides,
   };
 }
 
 describe("swarm behavior calibration", () => {
-  it("pulls extreme skip behavior back toward positive target history", async () => {
+  it("pulls unrealistic action probabilities back toward dataset-scale target history", async () => {
     const creative = loadCreatives().find((item) => item.id === "500038");
     expect(creative).toBeTruthy();
     const pack = await buildEvidencePack(creative!, brief, 0);
@@ -49,12 +50,12 @@ describe("swarm behavior calibration", () => {
       pack,
     );
 
-    expect(calibrated.behavior.probabilities.click + calibrated.behavior.probabilities.convert).toBeGreaterThan(
-      calibrated.behavior.probabilities.skip + calibrated.behavior.probabilities.exit,
-    );
+    expect(calibrated.behavior.probabilities.click).toBeLessThan(0.03);
+    expect(calibrated.behavior.probabilities.convert).toBeLessThan(0.007);
+    expect(calibrated.behavior.probabilities.click).toBeGreaterThan(pack.behaviorPrior.probabilityHints.click * 0.9);
   });
 
-  it("pulls optimistic click behavior back toward fatigued target history", async () => {
+  it("pulls optimistic click behavior back toward fatigued target history and caps action rates", async () => {
     const creative = loadCreatives().find((item) => item.id === "500001");
     expect(creative).toBeTruthy();
     const pack = await buildEvidencePack(creative!, brief, 0);
@@ -72,5 +73,70 @@ describe("swarm behavior calibration", () => {
     expect(calibrated.behavior.probabilities.skip + calibrated.behavior.probabilities.exit).toBeGreaterThan(
       calibrated.behavior.probabilities.click + calibrated.behavior.probabilities.convert,
     );
+    expect(calibrated.behavior.probabilities.click).toBeLessThan(0.02);
+    expect(calibrated.behavior.probabilities.convert).toBeLessThan(0.005);
+  });
+
+  it("keeps persona action rates distinct around the same evidence anchor", async () => {
+    const creative = loadCreatives().find((item) => item.id === "500001");
+    expect(creative).toBeTruthy();
+    const pack = await buildEvidencePack(creative!, brief, 0);
+    const rawBehavior: AgentReview["behavior"] = {
+      primaryState: "click",
+      probabilities: { skip: 0.2, ignore: 0.2, inspect: 0.2, click: 0.3, convert: 0.08, exit: 0.02 },
+      confidence: "medium",
+      rationale: "The creative has a visible reward and CTA.",
+    };
+
+    const lowAttention = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Low-Attention Scroller",
+        agentType: "persona",
+        attention: 5,
+        clarity: 5,
+        trust: 5,
+        conversionIntent: 4,
+      }),
+      pack,
+    );
+    const skeptical = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Skeptical User",
+        agentType: "persona",
+        attention: 6,
+        clarity: 6,
+        trust: 4,
+        conversionIntent: 4,
+      }),
+      pack,
+    );
+    const rewardSeeking = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Reward-Seeking User",
+        agentType: "persona",
+        attention: 8,
+        clarity: 7,
+        trust: 6,
+        conversionIntent: 7,
+      }),
+      pack,
+    );
+    const practical = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Practical Converter",
+        agentType: "persona",
+        attention: 6,
+        clarity: 8,
+        trust: 7,
+        conversionIntent: 8,
+      }),
+      pack,
+    );
+
+    expect(rewardSeeking.behavior.probabilities.click).toBeGreaterThan(skeptical.behavior.probabilities.click);
+    expect(rewardSeeking.behavior.probabilities.click).toBeGreaterThan(lowAttention.behavior.probabilities.click);
+    expect(practical.behavior.probabilities.convert).toBeGreaterThan(lowAttention.behavior.probabilities.convert);
+    expect(lowAttention.behavior.probabilities.skip).toBeGreaterThan(rewardSeeking.behavior.probabilities.skip);
+    expect(skeptical.behavior.probabilities.exit).toBeGreaterThan(rewardSeeking.behavior.probabilities.exit);
   });
 });

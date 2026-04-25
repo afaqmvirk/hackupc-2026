@@ -170,11 +170,16 @@ function priorFromTargetHistory(variant: CreativeDoc, benchmark: Benchmark): Beh
   const sentiment = sentimentFromMetrics(metrics, benchmark);
   const drivers = [`Target creative historical status is ${metrics?.creativeStatus ?? "unknown"}.`];
   let probabilityHints = probabilitiesForSentiment(sentiment);
+  const useRecentFatigueRates = metrics?.creativeStatus === "fatigued" || (metrics?.ctrDecayPct ?? 0) <= -0.82;
+  const clickRate = useRecentFatigueRates ? blendedFatigueRate(metrics?.ctr, metrics?.last7dCtr) : metrics?.ctr;
+  const conversionRate = useRecentFatigueRates
+    ? blendedFatigueRate(viewConversionRate(metrics?.ctr, metrics?.cvr), viewConversionRate(metrics?.last7dCtr, metrics?.last7dCvr))
+    : viewConversionRate(metrics?.ctr, metrics?.cvr);
 
   probabilityHints = adjustForMetricContext(probabilityHints, {
     benchmark,
-    ctr: metrics?.ctr,
-    cvr: metrics?.cvr,
+    clickRate,
+    conversionRate,
     perfScore: metrics?.perfScore,
     creativeStatus: metrics?.creativeStatus,
     ctrDecayPct: metrics?.ctrDecayPct,
@@ -197,7 +202,9 @@ function priorFromSimilarCreatives(
 ): BehaviorPrior {
   const avgPerfScore = weightedMean(similarCreatives.map((creative) => [creative.perfScore, creative.similarity]));
   const avgCtr = weightedMean(similarCreatives.map((creative) => [creative.ctr, creative.similarity]));
-  const avgCvr = weightedMean(similarCreatives.map((creative) => [creative.cvr, creative.similarity]));
+  const avgConversionRate = weightedMean(
+    similarCreatives.map((creative) => [viewConversionRate(creative.ctr, creative.cvr), creative.similarity]),
+  );
   const topRate = rate(similarCreatives.filter((creative) => creative.creativeStatus === "top_performer").length, similarCreatives.length);
   const fatiguedRate = rate(similarCreatives.filter((creative) => creative.creativeStatus === "fatigued").length, similarCreatives.length);
   const underperformerRate = rate(
@@ -219,8 +226,8 @@ function priorFromSimilarCreatives(
 
   probabilityHints = adjustForMetricContext(probabilityHints, {
     benchmark,
-    ctr: avgCtr,
-    cvr: avgCvr,
+    clickRate: avgCtr,
+    conversionRate: avgConversionRate,
     perfScore: avgPerfScore,
     creativeStatus: fatiguedRate >= 0.35 ? "fatigued" : underperformerRate >= 0.35 ? "underperformer" : undefined,
     ctrDecayPct: null,
@@ -254,8 +261,8 @@ function priorFromBenchmark(variant: CreativeDoc, benchmark: Benchmark): Behavio
 
   probabilityHints = adjustForMetricContext(probabilityHints, {
     benchmark,
-    ctr: benchmark.avgCtr,
-    cvr: benchmark.avgCvr,
+    clickRate: benchmark.avgCtr,
+    conversionRate: viewConversionRate(benchmark.avgCtr, benchmark.avgCvr),
     perfScore: benchmark.avgPerfScore,
     creativeStatus: benchmark.fatiguedRate >= 0.35 ? "fatigued" : benchmark.underperformerRate >= 0.25 ? "underperformer" : undefined,
     ctrDecayPct: benchmark.avgCtrDecayPct,
@@ -313,13 +320,13 @@ function sentimentFromAggregate({
 function probabilitiesForSentiment(sentiment: BehaviorPrior["datasetSentiment"]): BehaviorProbabilities {
   switch (sentiment) {
     case "positive":
-      return normalizeBehaviorProbabilities({ skip: 0.08, ignore: 0.14, inspect: 0.25, click: 0.3, convert: 0.18, exit: 0.05 });
+      return normalizeBehaviorProbabilities({ skip: 0.46, ignore: 0.305, inspect: 0.212, click: 0.009, convert: 0.001, exit: 0.013 });
     case "negative":
-      return normalizeBehaviorProbabilities({ skip: 0.33, ignore: 0.27, inspect: 0.18, click: 0.11, convert: 0.03, exit: 0.08 });
+      return normalizeBehaviorProbabilities({ skip: 0.62, ignore: 0.25, inspect: 0.096, click: 0.003, convert: 0.00025, exit: 0.03075 });
     case "fatigue_risk":
-      return normalizeBehaviorProbabilities({ skip: 0.33, ignore: 0.21, inspect: 0.18, click: 0.15, convert: 0.05, exit: 0.08 });
+      return normalizeBehaviorProbabilities({ skip: 0.6, ignore: 0.22, inspect: 0.154, click: 0.0045, convert: 0.00045, exit: 0.02105 });
     default:
-      return normalizeBehaviorProbabilities({ skip: 0.18, ignore: 0.24, inspect: 0.24, click: 0.2, convert: 0.08, exit: 0.06 });
+      return normalizeBehaviorProbabilities({ skip: 0.52, ignore: 0.29, inspect: 0.164, click: 0.0054, convert: 0.00057, exit: 0.02003 });
   }
 }
 
@@ -327,16 +334,16 @@ function adjustForMetricContext(
   probabilities: BehaviorProbabilities,
   {
     benchmark,
-    ctr,
-    cvr,
+    clickRate,
+    conversionRate,
     perfScore,
     creativeStatus,
     ctrDecayPct,
     drivers,
   }: {
     benchmark: Benchmark;
-    ctr?: number | null;
-    cvr?: number | null;
+    clickRate?: number | null;
+    conversionRate?: number | null;
     perfScore?: number | null;
     creativeStatus?: string;
     ctrDecayPct?: number | null;
@@ -344,34 +351,56 @@ function adjustForMetricContext(
   },
 ): BehaviorProbabilities {
   let next = probabilities;
+  const benchmarkConversionRate = viewConversionRate(benchmark.avgCtr, benchmark.avgCvr);
+
+  if (typeof clickRate === "number" && Number.isFinite(clickRate)) {
+    next = withActionRateAnchors(next, {
+      click: clickRate,
+      convert: typeof conversionRate === "number" && Number.isFinite(conversionRate) ? conversionRate : undefined,
+    });
+    drivers.push(
+      `Action-rate anchor: click/view ${formatRatePct(clickRate, 2)}${
+        typeof conversionRate === "number" && Number.isFinite(conversionRate)
+          ? `, conversion/view ${formatRatePct(conversionRate, 3)}`
+          : ""
+      }.`,
+    );
+  }
 
   if ((perfScore ?? 0) >= 0.75) {
-    next = withBehaviorDeltas(next, { click: 0.04, convert: 0.04, skip: -0.03, ignore: -0.02 });
-    drivers.push("High performance score raises click and conversion likelihood.");
+    next = withRelativeActionLift(next, { click: 1.12, convert: 1.12 });
+    next = withBehaviorDeltas(next, { inspect: 0.02, skip: -0.015, ignore: -0.005 });
+    drivers.push("High performance score raises action-rate anchors modestly and shifts more users into inspect.");
   } else if ((perfScore ?? 1) <= 0.25) {
-    next = withBehaviorDeltas(next, { skip: 0.05, ignore: 0.03, click: -0.03, convert: -0.02 });
-    drivers.push("Low performance score raises skip and ignore likelihood.");
+    next = withRelativeActionLift(next, { click: 0.82, convert: 0.82 });
+    next = withBehaviorDeltas(next, { skip: 0.04, ignore: 0.025, inspect: -0.03 });
+    drivers.push("Low performance score lowers action-rate anchors and raises skip/ignore likelihood.");
   }
 
-  if (relative(ctr, benchmark.avgCtr) >= 1.25) {
-    next = withBehaviorDeltas(next, { click: 0.04, inspect: 0.02, skip: -0.03 });
-    drivers.push("CTR is above benchmark, so click probability is lifted.");
-  } else if (relative(ctr, benchmark.avgCtr) <= 0.75) {
-    next = withBehaviorDeltas(next, { skip: 0.04, ignore: 0.03, click: -0.04 });
-    drivers.push("CTR is below benchmark, so skip and ignore probabilities are lifted.");
+  if (relative(clickRate, benchmark.avgCtr) >= 1.25) {
+    next = withRelativeActionLift(next, { click: 1.08 });
+    next = withBehaviorDeltas(next, { inspect: 0.015, skip: -0.012 });
+    drivers.push("Click/view rate is above benchmark, so click probability is lifted within dataset-scale bounds.");
+  } else if (relative(clickRate, benchmark.avgCtr) <= 0.75) {
+    next = withRelativeActionLift(next, { click: 0.86 });
+    next = withBehaviorDeltas(next, { skip: 0.03, ignore: 0.02, inspect: -0.02 });
+    drivers.push("Click/view rate is below benchmark, so skip and ignore probabilities are lifted.");
   }
 
-  if (relative(cvr, benchmark.avgCvr) >= 1.25) {
-    next = withBehaviorDeltas(next, { convert: 0.04, click: 0.02, exit: -0.02 });
-    drivers.push("CVR is above benchmark, so conversion probability is lifted.");
-  } else if (relative(cvr, benchmark.avgCvr) <= 0.75) {
-    next = withBehaviorDeltas(next, { exit: 0.03, convert: -0.03, ignore: 0.02 });
-    drivers.push("CVR is below benchmark, so post-click exit risk is lifted.");
+  if (relative(conversionRate, benchmarkConversionRate) >= 1.25) {
+    next = withRelativeActionLift(next, { convert: 1.1 });
+    next = withBehaviorDeltas(next, { exit: -0.008, inspect: 0.008 });
+    drivers.push("Conversion/view rate is above benchmark, so conversion probability is lifted within dataset-scale bounds.");
+  } else if (relative(conversionRate, benchmarkConversionRate) <= 0.75) {
+    next = withRelativeActionLift(next, { convert: 0.84 });
+    next = withBehaviorDeltas(next, { exit: 0.018, ignore: 0.012 });
+    drivers.push("Conversion/view rate is below benchmark, so post-click exit risk is lifted.");
   }
 
   if (creativeStatus === "fatigued" || (ctrDecayPct ?? 0) <= -0.82) {
-    next = withBehaviorDeltas(next, { skip: 0.08, exit: 0.04, click: -0.04, convert: -0.03 });
-    drivers.push("Fatigue or CTR decay raises skip and exit likelihood.");
+    next = withRelativeActionLift(next, { click: 0.9, convert: 0.9 });
+    next = withBehaviorDeltas(next, { skip: 0.08, exit: 0.035, inspect: -0.04, ignore: -0.015 });
+    drivers.push("Fatigue or CTR decay raises skip/exit and lowers action-rate anchors.");
   }
 
   return next;
@@ -386,31 +415,69 @@ function adjustForCreativeFeatures(
   let next = probabilities;
 
   if ((features.visualClutter ?? 0) >= 0.7) {
-    next = withBehaviorDeltas(next, { skip: 0.05, ignore: 0.03, inspect: -0.02, click: -0.03, convert: -0.02 });
+    next = withRelativeActionLift(next, { click: 0.86, convert: 0.9 });
+    next = withBehaviorDeltas(next, { skip: 0.05, ignore: 0.03, inspect: -0.02 });
     drivers.push("High visual clutter increases fast-skip risk.");
   }
   if ((features.textDensity ?? 0) >= 0.65) {
-    next = withBehaviorDeltas(next, { skip: 0.03, ignore: 0.03, click: -0.02 });
+    next = withRelativeActionLift(next, { click: 0.9 });
+    next = withBehaviorDeltas(next, { skip: 0.03, ignore: 0.03 });
     drivers.push("Dense text increases ignore risk on mobile.");
   }
   if ((features.readabilityScore ?? 1) <= 0.45) {
-    next = withBehaviorDeltas(next, { skip: 0.03, exit: 0.04, convert: -0.02 });
+    next = withRelativeActionLift(next, { convert: 0.84 });
+    next = withBehaviorDeltas(next, { skip: 0.03, exit: 0.04 });
     drivers.push("Low readability increases confusion or exit risk.");
   }
   if ((features.brandVisibilityScore ?? 1) <= 0.35) {
-    next = withBehaviorDeltas(next, { ignore: 0.04, convert: -0.02 });
+    next = withRelativeActionLift(next, { convert: 0.88 });
+    next = withBehaviorDeltas(next, { ignore: 0.04 });
     drivers.push("Weak brand visibility lowers conversion confidence.");
   }
   if ((features.noveltyScore ?? 0) >= 0.75) {
-    next = withBehaviorDeltas(next, { inspect: 0.04, click: 0.02, skip: -0.02 });
+    next = withRelativeActionLift(next, { click: 1.08 });
+    next = withBehaviorDeltas(next, { inspect: 0.04, skip: -0.02 });
     drivers.push("High novelty increases inspection and click curiosity.");
   }
   if (features.hasReward || features.hasPrice) {
-    next = withBehaviorDeltas(next, { inspect: 0.02, click: 0.02 });
+    next = withRelativeActionLift(next, { click: 1.08 });
+    next = withBehaviorDeltas(next, { inspect: 0.02 });
     drivers.push("Offer/reward framing increases inspection and click pull.");
   }
 
   return next;
+}
+
+function withActionRateAnchors(
+  probabilities: BehaviorProbabilities,
+  anchors: { click?: number | null; convert?: number | null },
+): BehaviorProbabilities {
+  const click = clampRate(anchors.click ?? probabilities.click, 0, 0.025);
+  const convert = clampRate(anchors.convert ?? probabilities.convert, 0, 0.006);
+  const remaining = Math.max(1 - click - convert, 0.001);
+  const nonActionStates = behaviorStates.filter((state) => state !== "click" && state !== "convert");
+  const nonActionTotal = nonActionStates.reduce((sum, state) => sum + probabilities[state], 0);
+
+  return normalizeBehaviorProbabilities(
+    Object.fromEntries(
+      behaviorStates.map((state) => {
+        if (state === "click") return [state, click];
+        if (state === "convert") return [state, convert];
+        const share = nonActionTotal > 0 ? probabilities[state] / nonActionTotal : 1 / nonActionStates.length;
+        return [state, remaining * share];
+      }),
+    ) as BehaviorProbabilities,
+  );
+}
+
+function withRelativeActionLift(
+  probabilities: BehaviorProbabilities,
+  multipliers: Partial<Record<"click" | "convert", number>>,
+): BehaviorProbabilities {
+  return withActionRateAnchors(probabilities, {
+    click: probabilities.click * (multipliers.click ?? 1),
+    convert: probabilities.convert * (multipliers.convert ?? 1),
+  });
 }
 
 function withBehaviorDeltas(
@@ -439,6 +506,30 @@ function relative(value?: number | null, baseline?: number | null) {
   return value / baseline;
 }
 
+function viewConversionRate(clickRate?: number | null, clickToConversionRate?: number | null) {
+  if (typeof clickRate !== "number" || typeof clickToConversionRate !== "number") {
+    return null;
+  }
+  if (!Number.isFinite(clickRate) || !Number.isFinite(clickToConversionRate)) {
+    return null;
+  }
+  return clickRate * clickToConversionRate;
+}
+
+function blendedFatigueRate(overall?: number | null, recent?: number | null) {
+  if (typeof overall !== "number" || !Number.isFinite(overall)) {
+    return typeof recent === "number" && Number.isFinite(recent) ? recent : null;
+  }
+  if (typeof recent !== "number" || !Number.isFinite(recent)) {
+    return overall;
+  }
+  return overall * 0.65 + recent * 0.35;
+}
+
+function clampRate(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
 export async function buildEvidencePack(variant: CreativeDoc, brief: CampaignBrief, index: number): Promise<EvidencePack> {
   const similarCreatives = await getSimilarCreatives(variant, brief);
   const benchmark = await getBenchmark(brief, similarCreatives);
@@ -452,6 +543,10 @@ export async function buildEvidencePack(variant: CreativeDoc, brief: CampaignBri
     `Visual signals: text density ${formatMetric(features.textDensity)}, clutter ${formatMetric(features.visualClutter)}, novelty ${formatMetric(features.noveltyScore)}.`,
     `Creative flags: reward=${features.hasReward}, gameplay=${features.hasGameplay}, price=${features.hasPrice}, person=${features.hasPerson}.`,
     `Benchmark context: ${benchmark.contextLabel} with ${benchmark.sampleSize} historical creatives.`,
+    `Dataset action-rate scale: benchmark click/view ${formatRatePct(benchmark.avgCtr, 2)}, benchmark conversion/view ${formatRatePct(
+      viewConversionRate(benchmark.avgCtr, benchmark.avgCvr),
+      3,
+    )}. Treat behavior.click and behavior.convert as impression-level rates, not broad intent scores.`,
     `Nearest historical creatives returned ${similarCreatives.length} evidence examples.`,
     `Simulated behavior prior is ${behaviorPrior.datasetSentiment} from ${behaviorPrior.source}; highest hinted state is ${dominantBehaviorState(
       behaviorPrior.probabilityHints,
@@ -459,8 +554,20 @@ export async function buildEvidencePack(variant: CreativeDoc, brief: CampaignBri
   ];
 
   if (metrics) {
+    const actualClickRate = metrics.creativeStatus === "fatigued" ? blendedFatigueRate(metrics.ctr, metrics.last7dCtr) : metrics.ctr;
+    const actualConversionRate =
+      metrics.creativeStatus === "fatigued"
+        ? blendedFatigueRate(viewConversionRate(metrics.ctr, metrics.cvr), viewConversionRate(metrics.last7dCtr, metrics.last7dCvr))
+        : viewConversionRate(metrics.ctr, metrics.cvr);
     facts.push(
-      `Historical summary for this dataset creative: CTR ${formatMetric(metrics.ctr)}, CVR ${formatMetric(metrics.cvr)}, status ${metrics.creativeStatus ?? "unknown"}.`,
+      `Historical summary for this dataset creative: click/view ${formatRatePct(metrics.ctr, 2)}, click-to-conversion ${formatRatePct(
+        metrics.cvr,
+        1,
+      )}, conversion/view ${formatRatePct(viewConversionRate(metrics.ctr, metrics.cvr), 3)}, status ${metrics.creativeStatus ?? "unknown"}.`,
+      `Behavior action-rate anchor for this creative: click/view ${formatRatePct(actualClickRate, 2)}, conversion/view ${formatRatePct(
+        actualConversionRate,
+        3,
+      )}${metrics.creativeStatus === "fatigued" ? " using recent fatigue-window rates where available" : ""}.`,
     );
   }
 
@@ -490,6 +597,13 @@ function formatMetric(value?: number | null) {
     return "n/a";
   }
   return value.toFixed(3);
+}
+
+function formatRatePct(value?: number | null, digits = 2) {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return "n/a";
+  }
+  return `${(value * 100).toFixed(digits)}%`;
 }
 
 function formatPct(value: number) {
