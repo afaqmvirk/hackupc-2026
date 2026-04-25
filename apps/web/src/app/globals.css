@@ -1,21 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f6f7f9;
-  --foreground: #0f172a;
+  --pp-border: rgba(199, 183, 255, 0.14);
+  --pp-border-strong: rgba(199, 183, 255, 0.28);
+  color-scheme: dark;
+}
+
+@theme {
+  --color-pp-bg: #070912;
+  --color-pp-soft: #0b0e18;
+  --color-pp-panel: #0d111d;
+  --color-pp-elevated: #111626;
+  --color-pp-purple: #7b3ff2;
+  --color-pp-violet: #9d64f6;
+  --color-pp-deep: #5b28c9;
+  --color-pp-lavender: #c7b7ff;
+  --color-pp-lilac: #e9e1ff;
+  --color-pp-white: #f6f6fb;
+  --color-pp-secondary: #c9c3dd;
+  --color-pp-muted: #8e87a6;
+  --color-pp-disabled: #5d5870;
+  --color-pp-success: #58d68d;
+  --color-pp-warning: #f5b041;
+  --color-pp-error: #ff6b7a;
+  --color-pp-info: #8fa2ff;
+  --shadow-glow: 0 10px 30px rgba(123, 63, 242, 0.32);
+  --shadow-panel: 0 24px 80px rgba(0, 0, 0, 0.35);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-background: #070912;
+  --color-foreground: #f6f6fb;
+  --font-sans: var(--font-poppins), Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #070912;
+  color: #f6f6fb;
 }
 
 button,
@@ -23,4 +46,13 @@ input,
 select,
 textarea {
   letter-spacing: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
