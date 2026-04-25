@@ -1,7 +1,8 @@
 import { config } from "@/lib/config";
 import { agentReviewJsonSchema, finalReportJsonSchema } from "@/lib/analysis/json-schemas";
 import { generateJson } from "@/lib/analysis/gemini";
-import { agentPrompt, aggregatorPrompt, swarmAgents } from "@/lib/analysis/prompts";
+import { agentPrompt, aggregatorPrompt, imageOnlyAgentPrompt, imageOnlyAggregatorPrompt, swarmAgents } from "@/lib/analysis/prompts";
+import { loadCreativeImage } from "@/lib/data/assets";
 import { buildEvidencePack } from "@/lib/data/retrieval";
 import {
   agentReviewSchema,
@@ -10,6 +11,7 @@ import {
   finalReportSchema,
   normalizeBehaviorProbabilities,
   type AgentReview,
+  type AnalysisInputMode,
   type BehaviorProbabilities,
   type CampaignBrief,
   type CreativeDoc,
@@ -24,6 +26,24 @@ export type SwarmEvent =
   | { type: "report"; report: FinalReport };
 
 export async function analyzeExperimentWithSwarm({
+  brief,
+  analysisInputMode = "evidence",
+  variants,
+  onEvent,
+}: {
+  brief: CampaignBrief;
+  analysisInputMode?: AnalysisInputMode;
+  variants: CreativeDoc[];
+  onEvent?: (event: SwarmEvent) => void | Promise<void>;
+}) {
+  if (analysisInputMode === "image_only") {
+    return analyzeExperimentWithImageOnlySwarm({ brief, variants, onEvent });
+  }
+
+  return analyzeExperimentWithEvidenceSwarm({ brief, variants, onEvent });
+}
+
+async function analyzeExperimentWithEvidenceSwarm({
   brief,
   variants,
   onEvent,
@@ -76,6 +96,98 @@ export async function analyzeExperimentWithSwarm({
     evidencePacks,
     reviews,
     report,
+  };
+}
+
+async function analyzeExperimentWithImageOnlySwarm({
+  brief,
+  variants,
+  onEvent,
+}: {
+  brief: CampaignBrief;
+  variants: CreativeDoc[];
+  onEvent?: (event: SwarmEvent) => void | Promise<void>;
+}) {
+  const publicVariants = variants.map((variant, index) => ({
+    actualId: variant.id,
+    publicId: `variant_${index + 1}`,
+    label: `Variant ${index + 1}`,
+    variant,
+  }));
+  const publicToActual = new Map(publicVariants.map((variant) => [variant.publicId, variant.actualId]));
+  const reviews: AgentReview[] = [];
+
+  onEvent?.({
+    type: "status",
+    message: "Image-only mode: agents receive only each image plus the user-entered brief.",
+  });
+
+  for (const publicVariant of publicVariants) {
+    const image = await loadCreativeImage(publicVariant.variant);
+    for (const agent of swarmAgents) {
+      const review = await generateJson({
+        model: config.swarmModel,
+        prompt: imageOnlyAgentPrompt({
+          agent,
+          variantId: publicVariant.publicId,
+          variantLabel: publicVariant.label,
+          campaignContext: brief,
+        }),
+        schema: agentReviewJsonSchema,
+        validator: agentReviewSchema,
+        image,
+      });
+      reviews.push(review);
+      await onEvent?.({ type: "agent", review: remapReviewVariantId(review, publicToActual) });
+    }
+  }
+
+  onEvent?.({
+    type: "status",
+    message: "Aggregator is ranking variants from image-only agent reviews.",
+  });
+
+  const generatedReport = await generateJson({
+    model: config.aggregatorModel,
+    prompt: imageOnlyAggregatorPrompt(reviews),
+    schema: finalReportJsonSchema,
+    validator: finalReportSchema,
+    temperature: 0.25,
+  });
+
+  const remappedReviews = reviews.map((review) => remapReviewVariantId(review, publicToActual));
+  const remappedReport = remapReportVariantIds(generatedReport, publicToActual);
+  const report = applyBehaviorAggregates(remappedReport, remappedReviews);
+
+  await onEvent?.({ type: "report", report });
+
+  return {
+    evidencePacks: [],
+    reviews: remappedReviews,
+    report,
+  };
+}
+
+function remapReviewVariantId(review: AgentReview, publicToActual: Map<string, string>): AgentReview {
+  return {
+    ...review,
+    variantId: publicToActual.get(review.variantId) ?? review.variantId,
+  };
+}
+
+function remapReportVariantIds(report: FinalReport, publicToActual: Map<string, string>): FinalReport {
+  return {
+    ...report,
+    winner: publicToActual.get(report.winner) ?? report.winner,
+    ranking: report.ranking.map((item) => ({
+      ...item,
+      variantId: publicToActual.get(item.variantId) ?? item.variantId,
+    })),
+    abTestPlan: {
+      ...report.abTestPlan,
+      control: publicToActual.get(report.abTestPlan.control) ?? report.abTestPlan.control,
+      challenger: publicToActual.get(report.abTestPlan.challenger) ?? report.abTestPlan.challenger,
+    },
   };
 }
 

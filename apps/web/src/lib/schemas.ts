@@ -9,6 +9,8 @@ export const campaignBriefSchema = z.object({
   audienceStyle: z.string().optional().default("mobile users"),
 });
 
+export const analysisInputModeSchema = z.enum(["evidence", "image_only"]).default("evidence");
+
 export const creativeFeaturesSchema = z.object({
   embedding: z.array(z.number()).optional(),
   ocrText: z.string().optional().default(""),
@@ -251,6 +253,7 @@ export const copilotAnswerSchema = z.object({
 export const experimentSchema = z.object({
   id: z.string(),
   brief: campaignBriefSchema,
+  analysisInputMode: analysisInputModeSchema,
   variants: z.array(creativeDocSchema).min(2).max(6),
   status: z.enum(["created", "analyzing", "complete", "failed"]),
   createdAt: z.string(),
@@ -259,6 +262,7 @@ export const experimentSchema = z.object({
 });
 
 export type CampaignBrief = z.infer<typeof campaignBriefSchema>;
+export type AnalysisInputMode = z.infer<typeof analysisInputModeSchema>;
 export type CreativeFeatures = z.infer<typeof creativeFeaturesSchema>;
 export type CreativeDoc = z.infer<typeof creativeDocSchema>;
 export type MetricsSummary = z.infer<typeof metricsSummarySchema>;

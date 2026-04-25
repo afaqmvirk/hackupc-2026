@@ -1,9 +1,10 @@
 import { createExperiment, getCreativeById } from "@/lib/data/repository";
-import { campaignBriefSchema, creativeDocSchema, type CreativeDoc } from "@/lib/schemas";
+import { analysisInputModeSchema, campaignBriefSchema, creativeDocSchema, type CreativeDoc } from "@/lib/schemas";
 import { z } from "zod";
 
 const createExperimentSchema = z.object({
   brief: campaignBriefSchema,
+  analysisInputMode: analysisInputModeSchema,
   creativeIds: z.array(z.string()).default([]),
   uploadedCreatives: z.array(creativeDocSchema).default([]),
 });
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
 
   const experiment = await createExperiment({
     brief: body.brief,
+    analysisInputMode: body.analysisInputMode,
     variants,
   });
 

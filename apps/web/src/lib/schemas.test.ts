@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentReviewSchema, finalReportSchema } from "@/lib/schemas";
+import { agentReviewSchema, experimentSchema, finalReportSchema } from "@/lib/schemas";
 
 const behavior = {
   primaryState: "click",
@@ -100,5 +100,49 @@ describe("behavior schemas", () => {
     });
 
     expect(report.ranking[0].dominantBehaviorState).toBe("click");
+  });
+
+  it("defaults experiments to evidence input mode", () => {
+    const experiment = experimentSchema.parse({
+      id: "experiment_1",
+      brief: {
+        category: "gaming",
+        region: "global",
+        language: "any",
+        os: "any",
+        objective: "installs",
+        audienceStyle: "casual mobile users",
+      },
+      variants: [
+        {
+          id: "creative_a",
+          source: "upload",
+          assetUrl: "/a.png",
+          assetType: "uploaded_image",
+          category: "gaming",
+          language: "any",
+          format: "uploaded_image",
+          durationSec: 0,
+          createdAt: "2026-04-25T00:00:00.000Z",
+          features: {},
+        },
+        {
+          id: "creative_b",
+          source: "upload",
+          assetUrl: "/b.png",
+          assetType: "uploaded_image",
+          category: "gaming",
+          language: "any",
+          format: "uploaded_image",
+          durationSec: 0,
+          createdAt: "2026-04-25T00:00:00.000Z",
+          features: {},
+        },
+      ],
+      status: "created",
+      createdAt: "2026-04-25T00:00:00.000Z",
+    });
+
+    expect(experiment.analysisInputMode).toBe("evidence");
   });
 });

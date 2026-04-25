@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { AgentReview, CampaignBrief, CopilotAnswer, CreativeDoc, EvidencePack, FinalReport } from "@/lib/schemas";
+import type { AgentReview, AnalysisInputMode, CampaignBrief, CopilotAnswer, CreativeDoc, EvidencePack, FinalReport } from "@/lib/schemas";
 import { cn, formatNumber, formatPct } from "@/lib/utils";
 
 type Catalog = {
@@ -57,6 +57,7 @@ export function CreativeSwarmApp() {
   const [brief, setBrief] = useState<CampaignBrief>(defaultBrief);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [uploadedCreatives, setUploadedCreatives] = useState<CreativeDoc[]>([]);
+  const [analysisInputMode, setAnalysisInputMode] = useState<AnalysisInputMode>("evidence");
   const [messages, setMessages] = useState<SwarmMessage[]>([]);
   const [report, setReport] = useState<FinalReport | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -170,6 +171,7 @@ export function CreativeSwarmApp() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           brief,
+          analysisInputMode,
           creativeIds: selectedIds,
           uploadedCreatives,
         }),
@@ -181,7 +183,14 @@ export function CreativeSwarmApp() {
 
       const analyzeResponse = await fetch(`/api/experiments/${createPayload.experiment.id}/analyze`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ experiment: createPayload.experiment }),
       });
+
+      if (!analyzeResponse.ok) {
+        const payload = await analyzeResponse.json().catch(() => null);
+        throw new Error(payload?.error ?? "Analysis request failed.");
+      }
 
       if (!analyzeResponse.body) {
         throw new Error("Analysis stream did not start.");
@@ -234,16 +243,26 @@ export function CreativeSwarmApp() {
               Campaign Brief
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={analyze}
-            disabled={!canAnalyze}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-pp-lavender/25 bg-gradient-to-br from-pp-purple to-pp-violet px-5 text-sm font-medium text-pp-white shadow-glow transition hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {isAnalyzing ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
-            Run Gemini swarm
-            <ChevronRight className="size-4" />
-          </button>
+          <div className="flex flex-col gap-2 sm:items-end">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <AgentInputModeToggle value={analysisInputMode} onChange={setAnalysisInputMode} disabled={isAnalyzing} />
+              <button
+                type="button"
+                onClick={analyze}
+                disabled={!canAnalyze}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] border border-pp-lavender/25 bg-gradient-to-br from-pp-purple to-pp-violet px-5 text-sm font-medium text-pp-white shadow-glow transition hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {isAnalyzing ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
+                Run Gemini swarm
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
+            {analysisInputMode === "image_only" ? (
+              <p className="max-w-[440px] text-xs text-pp-muted">
+                Agents see only image + brief. No historical metrics, benchmarks, or similar creatives are sent.
+              </p>
+            ) : null}
+          </div>
         </header>
 
         {error ? (
@@ -283,6 +302,43 @@ export function CreativeSwarmApp() {
         </section>
       </div>
     </main>
+  );
+}
+
+function AgentInputModeToggle({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: AnalysisInputMode;
+  onChange: (value: AnalysisInputMode) => void;
+  disabled: boolean;
+}) {
+  const options: Array<{ value: AnalysisInputMode; label: string }> = [
+    { value: "evidence", label: "Evidence" },
+    { value: "image_only", label: "Image only" },
+  ];
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="hidden text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted sm:inline">Agent Input</span>
+      <div className="inline-flex h-11 items-center rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated p-1">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            disabled={disabled}
+            className={cn(
+              "h-9 rounded-[8px] px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
+              value === option.value ? "bg-pp-purple text-pp-white shadow-glow" : "text-pp-muted hover:text-pp-white",
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -772,7 +828,7 @@ function behaviorMix(probabilities: {
     `Convert ${formatBehaviorPct(probabilities.convert)}`,
     `Skip ${formatBehaviorPct(probabilities.skip)}`,
     `Exit ${formatBehaviorPct(probabilities.exit)}`,
-  ].join(" · ");
+  ].join(" | ");
 }
 
 function metric(value?: number | null) {

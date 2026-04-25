@@ -1,4 +1,4 @@
-import type { EvidencePack } from "@/lib/schemas";
+import type { CampaignBrief, EvidencePack } from "@/lib/schemas";
 
 export type SwarmAgent = {
   name: string;
@@ -100,6 +100,72 @@ export function aggregatorPrompt(packs: EvidencePack[], reviews: unknown[]) {
     "Return practical, concrete recommendations.",
     "",
     `Evidence packs:\n${JSON.stringify(packs, null, 2)}`,
+    "",
+    `Agent reviews:\n${JSON.stringify(reviews, null, 2)}`,
+  ].join("\n");
+}
+
+export function imageOnlyAgentPrompt({
+  agent,
+  variantId,
+  variantLabel,
+  campaignContext,
+}: {
+  agent: SwarmAgent;
+  variantId: string;
+  variantLabel: string;
+  campaignContext: CampaignBrief;
+}) {
+  return [
+    "You are part of Creative Swarm Copilot for mobile growth teams.",
+    "Use only the attached creative image and the user-entered campaign brief below.",
+    "Infer visible text, CTA, visual hierarchy, trust cues, and likely user behavior directly from the pixels.",
+    "Do not rely on outside records, prior campaign results, saved metadata, retrieved examples, or extracted feature tables.",
+    `Agent: ${agent.name}`,
+    `Agent type: ${agent.type}`,
+    `Role: ${imageOnlyRole(agent)}`,
+    `Variant ID: ${variantId}`,
+    `Variant label: ${variantLabel}`,
+    "",
+    "Return variantId exactly as provided above.",
+    "Score the variant from your perspective. Make the recommendation useful to a marketer deciding scale, test, edit, pivot, or pause.",
+    "Also simulate the likely user behavior state from your perspective.",
+    "Behavior primaryState must be one of: skip, ignore, inspect, click, convert, exit.",
+    "Behavior probabilities must be decimals from 0 to 1 for all six states. They should approximately sum to 1; the app will normalize small drift.",
+    "Explain behavior.rationale in user terms, for example why someone would skip, inspect, click, convert, or exit.",
+    "Do not claim real users actually behaved this way. This is a visual pre-test simulation from the attached image.",
+    "",
+    `User-entered campaign brief:\n${JSON.stringify(campaignContext, null, 2)}`,
+  ].join("\n");
+}
+
+function imageOnlyRole(agent: SwarmAgent) {
+  switch (agent.name) {
+    case "Performance Analyst":
+      return "Judge likely visual response and test-readiness from the attached image only.";
+    case "Creative Director":
+      return "Review visual hierarchy, CTA clarity, composition, copy, and message focus from the attached image only.";
+    case "Fatigue Analyst":
+      return "Estimate whether the creative feels visually fresh or easy to ignore, using only what is visible.";
+    case "Localization Agent":
+      return "Check whether visible language, tone, offer, and visual framing fit the user-entered region and platform.";
+    case "Risk / Compliance Agent":
+      return "Flag unreadable terms, risky claims, misleading reward or price framing, and trust issues visible in the image.";
+    default:
+      return agent.role;
+  }
+}
+
+export function imageOnlyAggregatorPrompt(reviews: unknown[]) {
+  return [
+    "You are the final aggregator for Creative Swarm Copilot.",
+    "Rank the variants using only the agent reviews below. Those reviews came from attached-image-only agent analysis.",
+    "Do not assume outside records, prior campaign results, saved metadata, retrieved examples, or extracted feature tables.",
+    "Pick one winner. Every ranking item must map to a variantId present in the reviews.",
+    "Actions must be one of: scale, test, edit, pivot, pause.",
+    "Each ranking item must include simulated behavior fields: dominantBehaviorState, behaviorProbabilities, and behaviorSummary.",
+    "The behavior summary must describe simulated user rationale, not observed real behavior.",
+    "Return practical, concrete recommendations and a pre-test plan.",
     "",
     `Agent reviews:\n${JSON.stringify(reviews, null, 2)}`,
   ].join("\n");

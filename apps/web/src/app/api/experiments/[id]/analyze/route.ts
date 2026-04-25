@@ -1,11 +1,28 @@
 import { analyzeExperimentWithSwarm } from "@/lib/analysis/swarm";
 import { getExperiment, saveExperiment } from "@/lib/data/repository";
+import { experimentSchema } from "@/lib/schemas";
+import { z } from "zod";
 
 export const maxDuration = 300;
 
-export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
+const analyzeRequestSchema = z.object({
+  experiment: experimentSchema.optional(),
+});
+
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const experiment = await getExperiment(id);
+  let experiment = await getExperiment(id);
+
+  if (!experiment) {
+    const body = await request
+      .json()
+      .then((payload) => analyzeRequestSchema.parse(payload))
+      .catch(() => ({ experiment: undefined }));
+
+    if (body.experiment?.id === id) {
+      experiment = body.experiment;
+    }
+  }
 
   if (!experiment) {
     return Response.json({ error: "Experiment not found." }, { status: 404 });
@@ -22,6 +39,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         await saveExperiment({ ...experiment, status: "analyzing" });
         const result = await analyzeExperimentWithSwarm({
           brief: experiment.brief,
+          analysisInputMode: experiment.analysisInputMode ?? "evidence",
           variants: experiment.variants,
           onEvent: send,
         });

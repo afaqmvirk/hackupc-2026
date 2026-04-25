@@ -9,28 +9,47 @@ type Collections = {
   client: MongoClient;
 };
 
-let mongoClientPromise: Promise<MongoClient> | undefined;
-const memoryExperiments = new Map<string, Experiment>();
-const memoryUploads = new Map<string, CreativeDoc>();
+type RepositoryMemory = {
+  mongoClientPromise?: Promise<MongoClient>;
+  experiments: Map<string, Experiment>;
+  uploads: Map<string, CreativeDoc>;
+};
+
+const repositoryMemory = getRepositoryMemory();
+
+function getRepositoryMemory(): RepositoryMemory {
+  const globalStore = globalThis as typeof globalThis & {
+    __creativeSwarmRepositoryMemory?: RepositoryMemory;
+  };
+
+  if (!globalStore.__creativeSwarmRepositoryMemory) {
+    globalStore.__creativeSwarmRepositoryMemory = {
+      experiments: new Map<string, Experiment>(),
+      uploads: new Map<string, CreativeDoc>(),
+    };
+  }
+
+  return globalStore.__creativeSwarmRepositoryMemory;
+}
 
 async function getCollections(): Promise<Collections | null> {
   if (!config.mongodbUri) {
     return null;
   }
 
-  if (!mongoClientPromise) {
+  if (!repositoryMemory.mongoClientPromise) {
     const client = new MongoClient(config.mongodbUri);
-    mongoClientPromise = client.connect();
+    repositoryMemory.mongoClientPromise = client.connect();
   }
 
-  const client = await mongoClientPromise;
+  const client = await repositoryMemory.mongoClientPromise;
   return { client, db: client.db(config.mongodbDb) };
 }
 
 export async function getAllCreatives() {
   const collections = await getCollections();
   if (!collections) {
-    return [...loadCreatives(), ...memoryUploads.values()];
+    return [...loadCreatives(), ...repositoryMemory.uploads.values()];
   }
 
   const stored = await collections.db.collection<CreativeDoc>("creatives").find({}).toArray();
@@ -90,7 +109,7 @@ export async function queryAtlasSimilarCreatives(embedding: number[], filter: Re
 }
 
 export async function saveUploadedCreative(creative: CreativeDoc) {
-  memoryUploads.set(creative.id, creative);
+  repositoryMemory.uploads.set(creative.id, creative);
 
   const collections = await getCollections();
   if (collections) {
@@ -112,7 +131,7 @@ export async function createExperiment(input: Omit<Experiment, "id" | "status" |
     createdAt: new Date().toISOString(),
   };
 
-  memoryExperiments.set(experiment.id, experiment);
+  repositoryMemory.experiments.set(experiment.id, experiment);
 
   const collections = await getCollections();
   if (collections) {
@@ -123,7 +142,7 @@ export async function createExperiment(input: Omit<Experiment, "id" | "status" |
 }
 
 export async function getExperiment(id: string) {
-  const memory = memoryExperiments.get(id);
+  const memory = repositoryMemory.experiments.get(id);
   if (memory) {
     return memory;
   }
@@ -137,7 +156,7 @@ export async function getExperiment(id: string) {
 }
 
 export async function saveExperiment(experiment: Experiment) {
-  memoryExperiments.set(experiment.id, experiment);
+  repositoryMemory.experiments.set(experiment.id, experiment);
 
   const collections = await getCollections();
   if (collections) {
