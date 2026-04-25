@@ -123,6 +123,7 @@ describe("image-only swarm orchestration", () => {
     expect(result.report.abTestPlan.control).toBe("creative_a");
     expect(result.report.abTestPlan.challenger).toBe("creative_b");
     expect(result.report.personaActionForecast.map((forecast) => forecast.variantId)).toEqual(["creative_a", "creative_b"]);
+    expect(result.report.fatigueProfiles).toEqual([]);
     expect(result.report.personaActionForecast[0].projectedViews).toBe(1000);
     expect(result.report.personaActionForecast[0].totals.click).toBeLessThan(20);
     expect(result.report.personaActionForecast[0].totals.convert).toBeLessThan(5);

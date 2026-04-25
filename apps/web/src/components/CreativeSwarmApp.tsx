@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useDropzone } from "react-dropzone";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Activity,
   AlertCircle,
   BarChart3,
   Bot,
@@ -30,6 +31,7 @@ import {
   type CopilotAnswer,
   type CreativeDoc,
   type EvidencePack,
+  type FatigueProfile,
   type FinalReport,
 } from "@/lib/schemas";
 import { cn, formatNumber, formatPct } from "@/lib/utils";
@@ -524,7 +526,7 @@ function CreativeLibrary({
         </label>
       </div>
       <div className="grid max-h-[520px] gap-3 overflow-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {creatives.map((creative) => {
+        {creatives.map((creative, index) => {
           const selected = selectedIds.includes(creative.id);
           return (
             <button
@@ -543,6 +545,7 @@ function CreativeLibrary({
                 alt=""
                 width={74}
                 height={112}
+                loading={index < 6 ? "eager" : "lazy"}
                 className="h-28 w-[74px] rounded-[6px] object-cover"
               />
               <div className="min-w-0">
@@ -665,8 +668,8 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
           <h3 className="mt-1 text-lg font-semibold text-pp-white">{report.champion}</h3>
           <p className="mt-2 text-sm text-pp-secondary">{report.executiveSummary}</p>
         </div>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="h-64 min-w-0">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <BarChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(199,183,255,0.08)" />
               <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#8e87a6" }} axisLine={false} tickLine={false} />
@@ -705,6 +708,9 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
       </div>
 
       <div className="grid gap-5">
+        {report.fatigueProfiles?.length ? (
+          <FatiguePanel profiles={report.fatigueProfiles} creatives={creatives} />
+        ) : null}
         <InfoPanel icon={<Check className="size-4" />} title="Why It Wins" items={report.whyItWins} />
         <InfoPanel icon={<ShieldAlert className="size-4" />} title="Risks" items={report.risks} />
         <InfoPanel icon={<ChevronRight className="size-4" />} title="Next Actions" items={report.whatToDoNext} />
@@ -873,6 +879,112 @@ function InfoPanel({ icon, title, items }: { icon: React.ReactNode; title: strin
       </ul>
     </section>
   );
+}
+
+function FatiguePanel({ profiles, creatives }: { profiles: FatigueProfile[]; creatives: CreativeDoc[] }) {
+  return (
+    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
+      <div className="mb-3 flex items-center gap-2">
+        <Activity className="size-4 text-pp-violet" />
+        <h2 className="text-sm font-semibold text-pp-white">Fatigue Forecast</h2>
+      </div>
+      <div className="grid gap-3">
+        {profiles.map((profile, index) => {
+          const label = labelFor(profile.creativeId, creatives) || `Variant ${index + 1}`;
+          return (
+            <div key={profile.creativeId} className="rounded-[10px] border border-[var(--pp-border)] bg-pp-elevated p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-pp-white">{label}</span>
+                <UrgencyBadge urgency={profile.urgency} />
+              </div>
+
+              {/* Health score bar */}
+              <div className="mb-2">
+                <div className="mb-1 flex items-center justify-between text-xs text-pp-muted">
+                  <span>Fatigue Health</span>
+                  <span className="font-semibold text-pp-white">{profile.healthScore}/100</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-pp-panel">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${profile.healthScore}%`,
+                      background: healthGradient(profile.healthScore),
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Key metrics row */}
+              <div className="mb-2 flex flex-wrap gap-3 text-xs text-pp-muted">
+                {profile.estimatedLifespanDays !== null && (
+                  <span>
+                    Expected lifespan:{" "}
+                    <span className="font-medium text-pp-secondary">{profile.estimatedLifespanDays}d</span>
+                  </span>
+                )}
+                {profile.ctrDecayPct !== null && (
+                  <span>
+                    CTR decay:{" "}
+                    <span className={cn("font-medium", Math.abs(profile.ctrDecayPct) > 0.5 ? "text-pp-error" : "text-pp-warning")}>
+                      {Math.round(Math.abs(profile.ctrDecayPct) * 100)}%
+                    </span>
+                  </span>
+                )}
+                <span className="capitalize text-pp-disabled">
+                  {profile.dataSource === "historical" ? "historical data" : profile.dataSource === "similarity-predicted" ? "similarity-predicted" : "visual estimate"}
+                </span>
+              </div>
+
+              {profile.visualRiskFactors.length > 0 && (
+                <ul className="mb-1 grid gap-1">
+                  {profile.visualRiskFactors.map((factor) => (
+                    <li key={factor} className="flex items-start gap-1.5 text-xs text-pp-muted">
+                      <span className="mt-0.5 shrink-0 text-pp-warning">&gt;</span>
+                      {factor}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {profile.visualStrengths.length > 0 && (
+                <ul className="grid gap-1">
+                  {profile.visualStrengths.map((factor) => (
+                    <li key={factor} className="flex items-start gap-1.5 text-xs text-pp-muted">
+                      <span className="mt-0.5 shrink-0 text-pp-success">+</span>
+                      {factor}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function UrgencyBadge({ urgency }: { urgency: FatigueProfile["urgency"] }) {
+  const styles: Record<FatigueProfile["urgency"], string> = {
+    HEALTHY: "bg-pp-success/15 text-pp-success border-pp-success/30",
+    WATCH: "bg-pp-warning/15 text-pp-warning border-pp-warning/30",
+    INTERVENE: "bg-[rgba(255,150,50,0.15)] text-[#ff9632] border-[rgba(255,150,50,0.3)]",
+    PAUSE: "bg-pp-error/15 text-pp-error border-pp-error/30",
+  };
+  return (
+    <span className={cn("inline-flex items-center rounded-[6px] border px-2 py-0.5 text-xs font-semibold", styles[urgency])}>
+      {urgency}
+    </span>
+  );
+}
+
+// Thresholds match scoreToUrgency() in lib/analysis/fatigue.ts
+function healthGradient(score: number): string {
+  if (score >= 70) return "linear-gradient(90deg, #58d68d, #58d68d)"; // HEALTHY
+  if (score >= 45) return "linear-gradient(90deg, #f5b041, #f5b041)"; // WATCH
+  if (score >= 25) return "linear-gradient(90deg, #ff9632, #ff9632)"; // INTERVENE
+  return "linear-gradient(90deg, #ff6b7a, #ff6b7a)";                   // PAUSE
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

@@ -1,10 +1,12 @@
 import { config } from "@/lib/config";
 import { agentReviewJsonSchema, finalReportJsonSchema } from "@/lib/analysis/json-schemas";
 import { generateJson } from "@/lib/analysis/gemini";
+import { computeFatigueProfile } from "@/lib/analysis/fatigue";
 import { attachPersonaActionForecast } from "@/lib/analysis/persona-projections";
 import { agentPrompt, aggregatorPrompt, imageOnlyAgentPrompt, imageOnlyAggregatorPrompt, swarmAgents } from "@/lib/analysis/prompts";
 import { loadCreativeImage } from "@/lib/data/assets";
 import { buildEvidencePack } from "@/lib/data/retrieval";
+import { getDatasetCreatives } from "@/lib/data/repository";
 import {
   agentReviewSchema,
   behaviorStates,
@@ -114,12 +116,25 @@ async function analyzeExperimentWithEvidenceSwarm({
     projectedViews,
   });
 
-  await onEvent?.({ type: "report", report });
+  // Compute deterministic fatigue profiles from dataset signals + visual features.
+  // This runs after Gemini so it never blocks the LLM pipeline.
+  onEvent?.({ type: "status", message: "Computing fatigue forecasts from historical decay signals." });
+
+  const dataset = await getDatasetCreatives();
+  const datasetLookup = new Map(dataset.map((c) => [c.id, c]));
+
+  const fatigueProfiles = variants.map((variant, index) =>
+    computeFatigueProfile(variant, evidencePacks[index], datasetLookup),
+  );
+
+  const enrichedReport: FinalReport = { ...report, fatigueProfiles };
+
+  await onEvent?.({ type: "report", report: enrichedReport });
 
   return {
     evidencePacks,
     reviews,
-    report,
+    report: enrichedReport,
   };
 }
 
@@ -200,11 +215,14 @@ async function analyzeExperimentWithImageOnlySwarm({
 
   const remappedReviews = reviews.map((review) => remapReviewVariantId(review, publicToActual));
   const remappedReport = remapReportVariantIds(generatedReport, publicToActual);
-  const report = attachPersonaActionForecast({
-    report: applyBehaviorAggregates(remappedReport, remappedReviews),
-    reviews: remappedReviews,
-    projectedViews,
-  });
+  const report: FinalReport = {
+    ...attachPersonaActionForecast({
+      report: applyBehaviorAggregates(remappedReport, remappedReviews),
+      reviews: remappedReviews,
+      projectedViews,
+    }),
+    fatigueProfiles: [],
+  };
 
   await onEvent?.({ type: "report", report });
 

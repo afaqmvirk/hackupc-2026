@@ -32,6 +32,15 @@ describe("retrieval", () => {
     expect(Object.values(pack.behaviorPrior.probabilityHints).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 3);
   });
 
+  it("adds fatigue evidence facts when decay metrics exist", async () => {
+    const creative = loadCreatives().find((item) => item.metricsSummary?.ctrDecayPct != null);
+    expect(creative).toBeTruthy();
+
+    const pack = await buildEvidencePack(creative!, brief, 0);
+
+    expect(pack.facts.some((fact) => fact.includes("Fatigue signals: CTR decayed"))).toBe(true);
+  });
+
   it("uses similar or benchmark behavior priors for uploaded creatives", async () => {
     const datasetCreative = loadCreatives()[0];
     const upload: CreativeDoc = {

@@ -246,6 +246,19 @@ export const personaActionForecastSchema = z.object({
   totals: expectedActionCountsSchema,
 });
 
+export const fatigueProfileSchema = z.object({
+  creativeId: z.string(),
+  healthScore: z.number().min(0).max(100),
+  urgency: z.enum(["HEALTHY", "WATCH", "INTERVENE", "PAUSE"]),
+  estimatedLifespanDays: z.number().nullable(),
+  ctrDecayPct: z.number().nullable(),
+  cvrDecayPct: z.number().nullable(),
+  currentStatus: z.string().nullable(),
+  visualRiskFactors: z.array(z.string()),
+  visualStrengths: z.array(z.string()).default([]),
+  dataSource: z.enum(["historical", "similarity-predicted", "visual-only"]),
+});
+
 export const finalReportSchema = z.object({
   winner: z.string(),
   executiveSummary: z.string(),
@@ -266,6 +279,7 @@ export const finalReportSchema = z.object({
     actionIfWinner: z.string(),
     actionIfLoser: z.string(),
   }),
+  fatigueProfiles: z.array(fatigueProfileSchema).default([]),
 });
 
 export const copilotAnswerSchema = z.object({
@@ -286,6 +300,7 @@ export const experimentSchema = z.object({
   agentReviews: z.array(agentReviewSchema).optional(),
 });
 
+export type FatigueProfile = z.infer<typeof fatigueProfileSchema>;
 export type CampaignBrief = z.infer<typeof campaignBriefSchema>;
 export type AnalysisInputMode = z.infer<typeof analysisInputModeSchema>;
 export type CreativeFeatures = z.infer<typeof creativeFeaturesSchema>;

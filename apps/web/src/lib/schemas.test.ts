@@ -121,10 +121,25 @@ describe("behavior schemas", () => {
           },
         },
       ],
+      fatigueProfiles: [
+        {
+          creativeId: "variant_a",
+          healthScore: 64,
+          urgency: "WATCH",
+          estimatedLifespanDays: 12,
+          ctrDecayPct: -0.52,
+          cvrDecayPct: -0.34,
+          currentStatus: "stable",
+          visualRiskFactors: ["Moderate decay risk"],
+          visualStrengths: ["Readable layout"],
+          dataSource: "historical",
+        },
+      ],
     });
 
     expect(report.ranking[0].dominantBehaviorState).toBe("click");
     expect(report.personaActionForecast[0].totals.convert).toBeGreaterThan(9000);
+    expect(report.fatigueProfiles[0].urgency).toBe("WATCH");
   });
 
   it("defaults experiments to evidence input mode and projected views", () => {
