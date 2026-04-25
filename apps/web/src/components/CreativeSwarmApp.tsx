@@ -312,7 +312,7 @@ export function CreativeSwarmApp() {
               toggleCreative={toggleCreative}
             />
             <SwarmRoom messages={messages} isAnalyzing={isAnalyzing} />
-            <ResultsDashboard report={report} creatives={selectedCreatives} brief={brief} />
+            <ResultsDashboard report={report} creatives={selectedCreatives} brief={brief} analysisInputMode={analysisInputMode} />
           </div>
         </section>
       </div>
@@ -635,7 +635,17 @@ function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnal
   );
 }
 
-function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | null; creatives: CreativeDoc[]; brief: CampaignBrief }) {
+function ResultsDashboard({
+  report,
+  creatives,
+  brief,
+  analysisInputMode,
+}: {
+  report: FinalReport | null;
+  creatives: CreativeDoc[];
+  brief: CampaignBrief;
+  analysisInputMode: AnalysisInputMode;
+}) {
   if (!report) {
     return (
       <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
@@ -655,6 +665,7 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
     score: item.score,
     health: item.creativeHealth,
   }));
+  const fatigueByVariant = new Map(report.fatigueProfiles.map((profile) => [profile.creativeId, profile]));
 
   return (
     <section className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
@@ -686,23 +697,32 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
           </ResponsiveContainer>
         </div>
         <div className="mt-4 overflow-hidden rounded-[10px] border border-[var(--pp-border)]">
-          {report.ranking.map((item) => (
-            <div
-              key={item.variantId}
-              className="grid gap-3 border-b border-[var(--pp-border)] p-3 last:border-b-0 md:grid-cols-[56px_minmax(0,1fr)_120px_120px_120px] md:items-center"
-            >
-              <div className="text-lg font-semibold text-pp-white">#{item.rank}</div>
-              <div>
-                <p className="font-medium text-pp-white">{labelFor(item.variantId, creatives)}</p>
-                <p className="text-sm text-pp-muted">{item.predictedOutcome}</p>
-                <p className="mt-1 text-xs text-pp-secondary">{item.behaviorSummary}</p>
-                <p className="mt-1 text-xs text-pp-muted">{behaviorMix(item.behaviorProbabilities)}</p>
+          {report.ranking.map((item) => {
+            const fatigue = fatigueByVariant.get(item.variantId);
+            return (
+              <div
+                key={item.variantId}
+                className="grid gap-3 border-b border-[var(--pp-border)] p-3 last:border-b-0 md:grid-cols-[56px_minmax(0,1fr)_120px_120px_120px_120px] md:items-center"
+              >
+                <div className="text-lg font-semibold text-pp-white">#{item.rank}</div>
+                <div>
+                  <p className="font-medium text-pp-white">{labelFor(item.variantId, creatives)}</p>
+                  <p className="text-sm text-pp-muted">{item.predictedOutcome}</p>
+                  {fatigue ? (
+                    <p className="mt-1 text-xs text-pp-muted">
+                      Fatigue Health <span className="font-semibold text-pp-secondary">{fatigue.healthScore}/100</span> | {fatigue.urgency}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-xs text-pp-secondary">{item.behaviorSummary}</p>
+                  <p className="mt-1 text-xs text-pp-muted">{behaviorMix(item.behaviorProbabilities)}</p>
+                </div>
+                <Badge>{item.swarmConfidence} confidence</Badge>
+                <BehaviorBadge state={item.dominantBehaviorState} />
+                <Badge>{item.action}</Badge>
+                <Badge>{fatigue ? `fatigue ${fatigue.healthScore}/100` : "fatigue n/a"}</Badge>
               </div>
-              <Badge>{item.swarmConfidence} confidence</Badge>
-              <BehaviorBadge state={item.dominantBehaviorState} />
-              <Badge>{item.action}</Badge>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <PersonaActionForecastPanel report={report} creatives={creatives} />
       </div>
@@ -710,7 +730,9 @@ function ResultsDashboard({ report, creatives, brief }: { report: FinalReport | 
       <div className="grid gap-5">
         {report.fatigueProfiles?.length ? (
           <FatiguePanel profiles={report.fatigueProfiles} creatives={creatives} />
-        ) : null}
+        ) : (
+          <FatigueUnavailablePanel analysisInputMode={analysisInputMode} />
+        )}
         <InfoPanel icon={<Check className="size-4" />} title="Why It Wins" items={report.whyItWins} />
         <InfoPanel icon={<ShieldAlert className="size-4" />} title="Risks" items={report.risks} />
         <InfoPanel icon={<ChevronRight className="size-4" />} title="Next Actions" items={report.whatToDoNext} />
@@ -877,6 +899,23 @@ function InfoPanel({ icon, title, items }: { icon: React.ReactNode; title: strin
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+function FatigueUnavailablePanel({ analysisInputMode }: { analysisInputMode: AnalysisInputMode }) {
+  const message =
+    analysisInputMode === "image_only"
+      ? "Fatigue values are only computed in Evidence mode, because they use historical decay and similar-creative signals."
+      : "No fatigue profiles were returned for this run. Re-run the analysis to recompute evidence-mode fatigue values.";
+
+  return (
+    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
+      <div className="mb-3 flex items-center gap-2">
+        <Activity className="size-4 text-pp-violet" />
+        <h2 className="text-sm font-semibold text-pp-white">Fatigue Forecast</h2>
+      </div>
+      <p className="text-sm text-pp-secondary">{message}</p>
     </section>
   );
 }

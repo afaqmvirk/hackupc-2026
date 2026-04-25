@@ -139,4 +139,51 @@ describe("swarm behavior calibration", () => {
     expect(lowAttention.behavior.probabilities.skip).toBeGreaterThan(rewardSeeking.behavior.probabilities.skip);
     expect(skeptical.behavior.probabilities.exit).toBeGreaterThan(rewardSeeking.behavior.probabilities.exit);
   });
+
+  it("does not pile specialist click rates onto one shared cap", async () => {
+    const creative = loadCreatives().find((item) => item.id === "500001");
+    expect(creative).toBeTruthy();
+    const pack = await buildEvidencePack(creative!, brief, 0);
+    const rawBehavior: AgentReview["behavior"] = {
+      primaryState: "click",
+      probabilities: { skip: 0.2, ignore: 0.2, inspect: 0.1, click: 0.35, convert: 0.1, exit: 0.05 },
+      confidence: "medium",
+      rationale: "The creative might earn a tap.",
+    };
+
+    const performance = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Performance Analyst",
+        attention: 7,
+        clarity: 7,
+        trust: 7,
+        conversionIntent: 7,
+      }),
+      pack,
+    );
+    const risk = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Risk / Compliance Agent",
+        attention: 7,
+        clarity: 7,
+        trust: 7,
+        conversionIntent: 7,
+      }),
+      pack,
+    );
+    const fatigue = calibrateAgentReviewBehavior(
+      reviewWithBehavior(rawBehavior, {
+        agentName: "Fatigue Analyst",
+        attention: 7,
+        clarity: 7,
+        trust: 7,
+        conversionIntent: 7,
+      }),
+      pack,
+    );
+
+    const clickRates = [performance, risk, fatigue].map((review) => review.behavior.probabilities.click.toFixed(4));
+    expect(new Set(clickRates).size).toBeGreaterThan(1);
+    expect(performance.behavior.probabilities.click).toBeGreaterThan(risk.behavior.probabilities.click);
+  });
 });

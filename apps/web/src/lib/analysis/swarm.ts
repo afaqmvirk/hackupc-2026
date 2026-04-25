@@ -29,7 +29,7 @@ export type SwarmEvent =
   | { type: "agent"; review: AgentReview }
   | { type: "report"; report: FinalReport };
 
-const GEMINI_REQUEST_START_INTERVAL_MS = process.env.NODE_ENV === "test" ? 0 : 5000;
+const GEMINI_REQUEST_START_INTERVAL_MS = process.env.NODE_ENV === "test" ? 0 : config.geminiRequestStartIntervalMs;
 
 export async function analyzeExperimentWithSwarm({
   brief,
@@ -324,7 +324,7 @@ export function calibrateAgentReviewBehavior(review: AgentReview, pack: Evidence
   const probabilities =
     review.agentType === "persona"
       ? applyPersonaBehaviorShape(blended, review, prior, pack)
-      : constrainActionRates(blended, prior);
+      : constrainActionRates(blended, prior, review);
   const primaryState = dominantBehaviorState(probabilities);
   const shifted = primaryState !== review.behavior.primaryState;
   const constrained = probabilities.click < review.behavior.probabilities.click || probabilities.convert < review.behavior.probabilities.convert;
@@ -356,7 +356,7 @@ function calibrateImageOnlyReviewBehavior(review: AgentReview): AgentReview {
   const probabilities =
     review.agentType === "persona"
       ? applyPersonaBehaviorShape(review.behavior.probabilities, review, anchor)
-      : constrainActionRates(review.behavior.probabilities, anchor);
+      : constrainActionRates(review.behavior.probabilities, anchor, review);
   const primaryState = dominantBehaviorState(probabilities);
   const constrained = probabilities.click < review.behavior.probabilities.click || probabilities.convert < review.behavior.probabilities.convert;
 
@@ -373,19 +373,39 @@ function calibrateImageOnlyReviewBehavior(review: AgentReview): AgentReview {
   };
 }
 
-function constrainActionRates(probabilities: BehaviorProbabilities, anchor: Pick<BehaviorProbabilities, "click" | "convert">): BehaviorProbabilities {
-  const maxClick = Math.min(Math.max(anchor.click * 1.7, anchor.click + 0.0035), 0.02);
-  const maxConvert = Math.min(Math.max(anchor.convert * 2, anchor.convert + 0.0008), 0.004);
+function constrainActionRates(
+  probabilities: BehaviorProbabilities,
+  anchor: Pick<BehaviorProbabilities, "click" | "convert">,
+  review?: AgentReview,
+): BehaviorProbabilities {
+  const maxClick = specialistActionCap({
+    anchor: anchor.click,
+    review,
+    action: "click",
+    multiplierCap: 1.7,
+    additiveCap: 0.0035,
+    absoluteCap: 0.02,
+  });
+  const maxConvert = specialistActionCap({
+    anchor: anchor.convert,
+    review,
+    action: "convert",
+    multiplierCap: 2,
+    additiveCap: 0.0008,
+    absoluteCap: 0.004,
+  });
   let redistributed = 0;
   const next = { ...probabilities };
 
   if (next.click > maxClick) {
-    redistributed += next.click - maxClick;
-    next.click = maxClick;
+    const compressed = compressActionRate(next.click, anchor.click, maxClick);
+    redistributed += next.click - compressed;
+    next.click = compressed;
   }
   if (next.convert > maxConvert) {
-    redistributed += next.convert - maxConvert;
-    next.convert = maxConvert;
+    const compressed = compressActionRate(next.convert, anchor.convert, maxConvert);
+    redistributed += next.convert - compressed;
+    next.convert = compressed;
   }
 
   if (redistributed <= 0) {
@@ -400,6 +420,72 @@ function constrainActionRates(probabilities: BehaviorProbabilities, anchor: Pick
   }
 
   return normalizeBehaviorProbabilities(next);
+}
+
+function specialistActionCap({
+  anchor,
+  review,
+  action,
+  multiplierCap,
+  additiveCap,
+  absoluteCap,
+}: {
+  anchor: number;
+  review: AgentReview | undefined;
+  action: "click" | "convert";
+  multiplierCap: number;
+  additiveCap: number;
+  absoluteCap: number;
+}) {
+  const baseCap = Math.min(Math.max(anchor * multiplierCap, anchor + additiveCap), absoluteCap);
+  if (!review) {
+    return baseCap;
+  }
+
+  const roleScale = specialistRoleActionScale(review.agentName, action);
+  const scoreScale = bounded(
+    0.74 +
+      (review.attention / 10) * 0.1 +
+      (review.clarity / 10) * 0.08 +
+      (review.trust / 10) * 0.05 +
+      (review.conversionIntent / 10) * 0.08,
+    0.72,
+    1.1,
+  );
+
+  return bounded(baseCap * roleScale * scoreScale, anchor * 1.04, absoluteCap);
+}
+
+function specialistRoleActionScale(agentName: string, action: "click" | "convert") {
+  switch (agentName) {
+    case "Performance Analyst":
+      return action === "click" ? 1.08 : 1.06;
+    case "Creative Director":
+      return action === "click" ? 0.98 : 0.9;
+    case "Fatigue Analyst":
+      return action === "click" ? 0.82 : 0.78;
+    case "Localization Agent":
+      return action === "click" ? 0.88 : 0.84;
+    case "Risk / Compliance Agent":
+      return action === "click" ? 0.72 : 0.7;
+    default:
+      return 0.9;
+  }
+}
+
+function compressActionRate(raw: number, anchor: number, cap: number) {
+  if (raw <= cap) {
+    return raw;
+  }
+
+  const room = Math.max(cap - anchor, 0);
+  if (room <= 0) {
+    return cap;
+  }
+
+  const excess = Math.max(raw - anchor, 0);
+  const pressure = excess / (excess + 0.05);
+  return anchor + room * bounded(0.35 + pressure * 0.52, 0.35, 0.9);
 }
 
 function applyPersonaBehaviorShape(
