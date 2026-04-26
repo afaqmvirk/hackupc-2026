@@ -64,6 +64,17 @@ describe("image-only prompts", () => {
 });
 
 describe("evidence-mode behavior prompts", () => {
+  it("includes the Performance Marketer direct-response specialist", () => {
+    const marketer = swarmAgents.find((agent) => agent.name === "Performance Marketer");
+    expect(marketer).toBeTruthy();
+
+    const prompt = agentPrompt(marketer!, evidencePack());
+    expect(prompt).toContain("directResponseIntent");
+    expect(prompt).toContain("0.0 to 1.0");
+    expect(prompt).toContain("product/app visibility");
+    expect(prompt).toContain("Keep conversionIntent on the 0-10 score scale");
+  });
+
   it("tells agents to ground click and convert probabilities on dataset action rates", () => {
     const prompt = agentPrompt(swarmAgents.find((agent) => agent.name === "Reward-Seeking User")!, evidencePack());
 

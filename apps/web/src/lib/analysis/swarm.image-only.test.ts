@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   buildEvidencePack: vi.fn(),
   loadCreativeImage: vi.fn(),
   generateJson: vi.fn(),
+  simulateDecay: vi.fn(),
 }));
 
 vi.mock("@/lib/data/retrieval", () => ({
@@ -19,14 +20,22 @@ vi.mock("@/lib/analysis/gemini", () => ({
   generateJson: mocks.generateJson,
 }));
 
+vi.mock("@/lib/analysis/decay", () => ({
+  simulateDecay: mocks.simulateDecay,
+}));
+
 describe("image-only swarm orchestration", () => {
   beforeEach(() => {
     mocks.buildEvidencePack.mockReset();
     mocks.loadCreativeImage.mockReset();
     mocks.generateJson.mockReset();
+    mocks.simulateDecay.mockReset();
 
     mocks.buildEvidencePack.mockImplementation(() => {
       throw new Error("buildEvidencePack must not be called in image-only mode.");
+    });
+    mocks.simulateDecay.mockImplementation(() => {
+      throw new Error("simulateDecay must not be called in image-only mode.");
     });
     mocks.loadCreativeImage.mockResolvedValue({ base64: "ZmFrZQ==", mimeType: "image/png" });
     mocks.generateJson.mockImplementation(({ prompt }: { prompt: string }) => {
@@ -108,6 +117,7 @@ describe("image-only swarm orchestration", () => {
 
     const prompts = mocks.generateJson.mock.calls.map(([input]) => input.prompt).join("\n\n");
     expect(mocks.buildEvidencePack).not.toHaveBeenCalled();
+    expect(mocks.simulateDecay).not.toHaveBeenCalled();
     expect(mocks.loadCreativeImage).toHaveBeenCalledTimes(2);
     expect(events.some((event) => event.type === "evidence")).toBe(false);
     expect(prompts).toContain("variant_1");
@@ -124,6 +134,8 @@ describe("image-only swarm orchestration", () => {
     expect(result.report.abTestPlan.challenger).toBe("creative_b");
     expect(result.report.personaActionForecast.map((forecast) => forecast.variantId)).toEqual(["creative_a", "creative_b"]);
     expect(result.report.fatigueProfiles).toEqual([]);
+    expect(result.report.decayCurves).toEqual([]);
+    expect(result.decayCurves).toEqual([]);
     expect(result.report.personaActionForecast[0].projectedViews).toBe(1000);
     expect(result.report.personaActionForecast[0].totals.click).toBeLessThan(20);
     expect(result.report.personaActionForecast[0].totals.convert).toBeLessThan(5);

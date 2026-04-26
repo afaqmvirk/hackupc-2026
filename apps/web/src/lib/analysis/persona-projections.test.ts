@@ -94,6 +94,7 @@ function review({
     clarity: 6,
     trust: 6,
     conversionIntent: 6,
+    directResponseIntent: 0.5,
     fatigueRisk: "medium",
     recommendation: "test",
     behavior: {

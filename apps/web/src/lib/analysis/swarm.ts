@@ -1,5 +1,6 @@
 import { config } from "@/lib/config";
 import { agentReviewJsonSchema, finalReportJsonSchema } from "@/lib/analysis/json-schemas";
+import { simulateDecay } from "@/lib/analysis/decay";
 import { generateJson } from "@/lib/analysis/gemini";
 import { computeFatigueProfile } from "@/lib/analysis/fatigue";
 import { attachPersonaActionForecast } from "@/lib/analysis/persona-projections";
@@ -21,15 +22,29 @@ import {
   type CreativeDoc,
   type EvidencePack,
   type FinalReport,
+  type SimulatedDecayCurve,
 } from "@/lib/schemas";
 
 export type SwarmEvent =
   | { type: "status"; message: string }
   | { type: "evidence"; pack: EvidencePack }
   | { type: "agent"; review: AgentReview }
+  | { type: "decay"; curves: SimulatedDecayCurve[] }
   | { type: "report"; report: FinalReport };
 
+const GEMINI_TOKEN_COUNT = Math.max(1, config.geminiApiKeys.length);
 const GEMINI_REQUEST_START_INTERVAL_MS = process.env.NODE_ENV === "test" ? 0 : config.geminiRequestStartIntervalMs;
+
+function geminiQueueStatusMessage() {
+  const seconds = Number((GEMINI_REQUEST_START_INTERVAL_MS / 1000).toFixed(2));
+  const tokenLabel = GEMINI_TOKEN_COUNT === 1 ? "API token" : "API tokens";
+
+  if (config.geminiApiKeys.length === 0) {
+    return "Gemini swarm agents are queued, but no Gemini API token is configured yet.";
+  }
+
+  return `Gemini swarm agents are queued across ${GEMINI_TOKEN_COUNT} ${tokenLabel}, paced at one request every ${seconds} seconds per token.`;
+}
 
 export async function analyzeExperimentWithSwarm({
   brief,
@@ -64,21 +79,36 @@ async function analyzeExperimentWithEvidenceSwarm({
 }) {
   const evidencePacks: EvidencePack[] = [];
   const reviews: AgentReview[] = [];
+  const decayCurves: SimulatedDecayCurve[] = [];
 
-  onEvent?.({ type: "status", message: "Building evidence packs from creative metadata, benchmarks, and similar ads." });
+  onEvent?.({ type: "status", message: "Building evidence packs and running 14-day fatigue simulations." });
 
   for (let index = 0; index < variants.length; index += 1) {
-    const pack = await buildEvidencePack(variants[index], brief, index);
-    evidencePacks.push(pack);
-    await onEvent?.({ type: "evidence", pack });
+    const [pack, curve] = await Promise.all([
+      buildEvidencePack(variants[index], brief, index),
+      simulateDecay(variants[index]),
+    ]);
+    const enrichedPack: EvidencePack = { ...pack, decayCurve: curve };
+
+    decayCurves.push(curve);
+    evidencePacks.push(enrichedPack);
+    await onEvent?.({ type: "evidence", pack: enrichedPack });
   }
+
+  await onEvent?.({ type: "decay", curves: decayCurves });
+  onEvent?.({
+    type: "status",
+    message: `Fatigue simulation complete. Earliest predicted 30% CTR drop is day ${Math.min(
+      ...decayCurves.map((curve) => curve.fatiguePredictionDay),
+    )}.`,
+  });
 
   onEvent?.({
     type: "status",
-    message: `Gemini swarm agents are queued with one new request every ${GEMINI_REQUEST_START_INTERVAL_MS / 1000} seconds.`,
+    message: geminiQueueStatusMessage(),
   });
 
-  const requestScheduler = new RequestStartScheduler(GEMINI_REQUEST_START_INTERVAL_MS);
+  const requestScheduler = new RequestStartScheduler(GEMINI_REQUEST_START_INTERVAL_MS, GEMINI_TOKEN_COUNT);
   reviews.push(
     ...(await runAgentReviewTasks({
       tasks: evidencePacks.flatMap((pack) =>
@@ -111,7 +141,7 @@ async function analyzeExperimentWithEvidenceSwarm({
     }),
   );
   const report = attachPersonaActionForecast({
-    report: applyBehaviorAggregates(generatedReport, reviews),
+    report: addDecaySignalsToReport(applyBehaviorAggregates(generatedReport, reviews), decayCurves),
     reviews,
     projectedViews,
   });
@@ -127,13 +157,14 @@ async function analyzeExperimentWithEvidenceSwarm({
     computeFatigueProfile(variant, evidencePacks[index], datasetLookup),
   );
 
-  const enrichedReport: FinalReport = { ...report, fatigueProfiles };
+  const enrichedReport: FinalReport = { ...report, fatigueProfiles, decayCurves };
 
   await onEvent?.({ type: "report", report: enrichedReport });
 
   return {
     evidencePacks,
     reviews,
+    decayCurves,
     report: enrichedReport,
   };
 }
@@ -169,10 +200,10 @@ async function analyzeExperimentWithImageOnlySwarm({
 
   onEvent?.({
     type: "status",
-    message: `Gemini swarm agents are queued with one new request every ${GEMINI_REQUEST_START_INTERVAL_MS / 1000} seconds.`,
+    message: geminiQueueStatusMessage(),
   });
 
-  const requestScheduler = new RequestStartScheduler(GEMINI_REQUEST_START_INTERVAL_MS);
+  const requestScheduler = new RequestStartScheduler(GEMINI_REQUEST_START_INTERVAL_MS, GEMINI_TOKEN_COUNT);
   reviews.push(
     ...(await runAgentReviewTasks({
       tasks: publicVariants.flatMap((publicVariant) =>
@@ -222,6 +253,7 @@ async function analyzeExperimentWithImageOnlySwarm({
       projectedViews,
     }),
     fatigueProfiles: [],
+    decayCurves: [],
   };
 
   await onEvent?.({ type: "report", report });
@@ -229,7 +261,19 @@ async function analyzeExperimentWithImageOnlySwarm({
   return {
     evidencePacks: [],
     reviews: remappedReviews,
+    decayCurves: [],
     report,
+  };
+}
+
+function addDecaySignalsToReport(report: FinalReport, decayCurves: SimulatedDecayCurve[]): FinalReport {
+  return {
+    ...report,
+    decayCurves,
+    ranking: report.ranking.map((item) => {
+      const curve = decayCurves.find((candidate) => candidate.variantId === item.variantId);
+      return curve ? { ...item, fatiguePredictionDay: curve.fatiguePredictionDay } : item;
+    }),
   };
 }
 
@@ -259,13 +303,23 @@ function remapReportVariantIds(report: FinalReport, publicToActual: Map<string, 
 type AgentReviewTask = () => Promise<AgentReview>;
 
 class RequestStartScheduler {
-  private nextStartAt = Date.now();
+  private readonly nextStartByLane: number[];
 
-  constructor(private readonly intervalMs: number) {}
+  constructor(
+    private readonly intervalMs: number,
+    laneCount = 1,
+  ) {
+    const now = Date.now();
+    this.nextStartByLane = Array.from({ length: Math.max(1, laneCount) }, () => now);
+  }
 
   async schedule<T>(request: () => Promise<T>): Promise<T> {
-    const startAt = this.nextStartAt;
-    this.nextStartAt = startAt + this.intervalMs;
+    const laneIndex = this.nextStartByLane.reduce(
+      (earliestIndex, startAt, index, starts) => (startAt < starts[earliestIndex] ? index : earliestIndex),
+      0,
+    );
+    const startAt = this.nextStartByLane[laneIndex];
+    this.nextStartByLane[laneIndex] = startAt + this.intervalMs;
     await wait(Math.max(0, startAt - Date.now()));
     return request();
   }
@@ -448,7 +502,8 @@ function specialistActionCap({
       (review.attention / 10) * 0.1 +
       (review.clarity / 10) * 0.08 +
       (review.trust / 10) * 0.05 +
-      (review.conversionIntent / 10) * 0.08,
+      (review.conversionIntent / 10) * 0.06 +
+      (review.directResponseIntent ?? 0.5) * 0.04,
     0.72,
     1.1,
   );
@@ -460,6 +515,8 @@ function specialistRoleActionScale(agentName: string, action: "click" | "convert
   switch (agentName) {
     case "Performance Analyst":
       return action === "click" ? 1.08 : 1.06;
+    case "Performance Marketer":
+      return action === "click" ? 1.14 : 1.12;
     case "Creative Director":
       return action === "click" ? 0.98 : 0.9;
     case "Fatigue Analyst":

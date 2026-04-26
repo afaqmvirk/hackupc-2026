@@ -13,6 +13,11 @@ export const swarmAgents: SwarmAgent[] = [
     role: "Compare the creative to historical KPI evidence and similar creatives. Focus on likely test outcome.",
   },
   {
+    name: "Performance Marketer",
+    type: "specialist",
+    role: "Judge direct-response readiness with a ruthless growth-marketer lens. You care about product visibility, CTA clarity, offer specificity, and whether a user has a concrete reason to tap. Pretty imagery without product, offer, or CTA should score very low on directResponseIntent.",
+  },
+  {
     name: "Creative Director",
     type: "specialist",
     role: "Review visual hierarchy, CTA clarity, composition, copy, and message focus.",
@@ -20,7 +25,7 @@ export const swarmAgents: SwarmAgent[] = [
   {
     name: "Fatigue Analyst",
     type: "specialist",
-    role: "Estimate whether the creative will decay quickly, using novelty, similarity, and historical fatigue signs.",
+    role: "Estimate whether the creative will decay quickly, using historical fatigue signs, similar creatives, and any quantitative decayCurve in the evidence pack. When decayCurve is present, anchor on fatiguePredictionDay: day 5 or earlier means high fatigue risk, days 6-10 mean medium, and day 11 or later means low. Cite the predicted day and the visual traits driving decay.",
   },
   {
     name: "Localization Agent",
@@ -73,6 +78,8 @@ export function agentPrompt(agent: SwarmAgent, evidence: EvidencePack) {
     `Role: ${agent.role}`,
     "",
     "Score the variant from your perspective. Make the recommendation useful to a marketer deciding scale, test, edit, pivot, or pause.",
+    "Keep conversionIntent on the 0-10 score scale used by the other agent scores.",
+    "Set directResponseIntent from 0.0 to 1.0 for visible business action strength: product/app visibility, CTA clarity, offer specificity, and concrete tap reason. A polished image with no product or CTA should be near 0.0.",
     "Also simulate the likely user behavior state from your perspective.",
     "Behavior primaryState must be one of: skip, ignore, inspect, click, convert, exit.",
     "Behavior probabilities must be decimals from 0 to 1 for all six states. They should approximately sum to 1; the app will normalize small drift.",
@@ -108,6 +115,10 @@ export function aggregatorPrompt(packs: EvidencePack[], reviews: unknown[]) {
     "The behavior summary must describe simulated user rationale, not observed real behavior.",
     "Return practical, concrete recommendations.",
     "",
+    "STOCHASTIC DECAY SIGNAL: Evidence packs may contain a decayCurve block with a Weibull-simulated 14-day CTR projection.",
+    "When present, use decayCurve.fatiguePredictionDay as a hard fatigue signal. Variants predicted to fatigue before day 7 must surface that risk with the exact day.",
+    "Earlier fatigue days should lower confidence or ranking unless peak KPI evidence is clearly stronger.",
+    "",
     `Evidence packs:\n${JSON.stringify(packs, null, 2)}`,
     "",
     `Agent reviews:\n${JSON.stringify(reviews, null, 2)}`,
@@ -138,6 +149,8 @@ export function imageOnlyAgentPrompt({
     "",
     "Return variantId exactly as provided above.",
     "Score the variant from your perspective. Make the recommendation useful to a marketer deciding scale, test, edit, pivot, or pause.",
+    "Keep conversionIntent on the 0-10 score scale used by the other agent scores.",
+    "Set directResponseIntent from 0.0 to 1.0 for visible business action strength: product/app visibility, CTA clarity, offer specificity, and concrete tap reason. A polished image with no product or CTA should be near 0.0.",
     "Also simulate the likely user behavior state from your perspective.",
     "Behavior primaryState must be one of: skip, ignore, inspect, click, convert, exit.",
     "Behavior probabilities must be decimals from 0 to 1 for all six states. They should approximately sum to 1; the app will normalize small drift.",
@@ -158,6 +171,8 @@ function imageOnlyRole(agent: SwarmAgent) {
   switch (agent.name) {
     case "Performance Analyst":
       return "Judge likely visual response and test-readiness from the attached image only.";
+    case "Performance Marketer":
+      return "Judge direct-response readiness from the attached image only: visible product, CTA, offer, and reason to tap. Be harsh when the image is attractive but not actionable.";
     case "Creative Director":
       return "Review visual hierarchy, CTA clarity, composition, copy, and message focus from the attached image only.";
     case "Fatigue Analyst":
@@ -185,6 +200,8 @@ function personaBehaviorGuidance(agent: SwarmAgent) {
       return "Persona calibration: Visual Trend Seeker should mostly shift inspect/ignore based on polish and novelty; visual appeal alone is not a high click rate.";
     case "Category-Matched User":
       return "Persona calibration: Category-Matched User should stay close to the campaign and evidence baseline, adjusting modestly for category fit.";
+    case "Performance Marketer":
+      return "Specialist calibration: Performance Marketer should treat directResponseIntent as the hard business-action score; strong aesthetics do not compensate for a missing product, offer, or CTA.";
     default:
       return "Specialist calibration: specialists should use evidence to adjust rationale and risk, not inflate click or convert probabilities beyond observed action-rate scale.";
   }

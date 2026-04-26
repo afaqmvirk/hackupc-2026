@@ -180,6 +180,17 @@ export const similarCreativeSchema = z.object({
   similarity: z.number(),
 });
 
+export const simulatedDecayCurveSchema = z.object({
+  variantId: z.string(),
+  ctrCurve: z.array(z.number()).length(14),
+  cvrCurve: z.array(z.number()).length(14),
+  bandLow: z.array(z.number()).length(14),
+  bandHigh: z.array(z.number()).length(14),
+  fatiguePredictionDay: z.number().int().min(1).max(14),
+  fatigueConfidence: z.enum(["low", "medium", "high"]),
+  modelParams: z.record(z.string(), z.number()),
+});
+
 export const evidencePackSchema = z.object({
   variantId: z.string(),
   variantLabel: z.string(),
@@ -190,6 +201,7 @@ export const evidencePackSchema = z.object({
   behaviorPrior: behaviorPriorSchema,
   facts: z.array(z.string()),
   warnings: z.array(z.string()),
+  decayCurve: simulatedDecayCurveSchema.optional(),
 });
 
 export const agentReviewSchema = z.object({
@@ -200,6 +212,7 @@ export const agentReviewSchema = z.object({
   clarity: z.number().min(0).max(10),
   trust: z.number().min(0).max(10),
   conversionIntent: z.number().min(0).max(10),
+  directResponseIntent: z.number().min(0).max(1).default(0.5),
   fatigueRisk: z.enum(["low", "medium", "high"]),
   recommendation: z.enum(["scale", "test", "edit", "pivot", "pause"]),
   behavior: behaviorSimulationSchema,
@@ -224,6 +237,7 @@ export const variantAnalysisSchema = z.object({
   topReasons: z.array(z.string()),
   risks: z.array(z.string()),
   recommendedEdits: z.array(z.string()),
+  fatiguePredictionDay: z.number().int().min(1).max(14).optional(),
 });
 
 export const expectedActionCountsSchema = z.object({
@@ -280,6 +294,7 @@ export const finalReportSchema = z.object({
     actionIfLoser: z.string(),
   }),
   fatigueProfiles: z.array(fatigueProfileSchema).default([]),
+  decayCurves: z.array(simulatedDecayCurveSchema).default([]),
 });
 
 export const copilotAnswerSchema = z.object({
@@ -308,6 +323,7 @@ export type CreativeDoc = z.infer<typeof creativeDocSchema>;
 export type MetricsSummary = z.infer<typeof metricsSummarySchema>;
 export type Benchmark = z.infer<typeof benchmarkSchema>;
 export type SimilarCreative = z.infer<typeof similarCreativeSchema>;
+export type SimulatedDecayCurve = z.infer<typeof simulatedDecayCurveSchema>;
 export type BehaviorProbabilities = z.infer<typeof behaviorProbabilitiesSchema>;
 export type BehaviorPrior = z.infer<typeof behaviorPriorSchema>;
 export type BehaviorSimulation = z.infer<typeof behaviorSimulationSchema>;

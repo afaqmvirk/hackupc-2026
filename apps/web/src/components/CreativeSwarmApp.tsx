@@ -5,7 +5,6 @@ import Image from "next/image";
 import { useDropzone } from "react-dropzone";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Activity,
   AlertCircle,
   BarChart3,
   Bot,
@@ -13,27 +12,24 @@ import {
   ChevronRight,
   FileImage,
   FlaskConical,
-  Layers3,
   Loader2,
+  Maximize2,
   MessageSquareText,
   Search,
-  ShieldAlert,
   Sparkles,
   Upload,
   X,
 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   defaultProjectedViews,
   type AgentReview,
   type AnalysisInputMode,
   type CampaignBrief,
-  type CopilotAnswer,
   type CreativeDoc,
   type EvidencePack,
-  type FatigueProfile,
-  type FinalReport,
+  type SimulatedDecayCurve,
 } from "@/lib/schemas";
+import { swarmAgents, type SwarmAgent } from "@/lib/analysis/prompts";
 import { cn, formatNumber, formatPct } from "@/lib/utils";
 
 type Catalog = {
@@ -45,13 +41,26 @@ type Catalog = {
     objectives: string[];
     formats: string[];
   };
+  campaigns: CampaignOption[];
   creatives: CreativeDoc[];
+};
+
+type CampaignOption = {
+  id: string;
+  appName: string;
+  advertiserName: string;
+  category: string;
+  objective: string;
+  countries: string[];
+  os: string;
+  creativeCount: number;
 };
 
 type SwarmMessage =
   | { id: string; type: "status"; message: string }
   | { id: string; type: "agent"; review: AgentReview }
   | { id: string; type: "evidence"; pack: EvidencePack }
+  | { id: string; type: "decay"; curves: SimulatedDecayCurve[] }
   | { id: string; type: "error"; message: string };
 
 const defaultBrief: CampaignBrief = {
@@ -63,38 +72,43 @@ const defaultBrief: CampaignBrief = {
   audienceStyle: "casual mobile users",
 };
 
-const forecastActionStates = ["skip", "click", "convert", "exit"] as const;
-
 export function CreativeSwarmApp() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [brief, setBrief] = useState<CampaignBrief>(defaultBrief);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedDatasetCreatives, setSelectedDatasetCreatives] = useState<CreativeDoc[]>([]);
   const [uploadedCreatives, setUploadedCreatives] = useState<CreativeDoc[]>([]);
   const [analysisInputMode, setAnalysisInputMode] = useState<AnalysisInputMode>("evidence");
   const [projectedViews, setProjectedViews] = useState(defaultProjectedViews);
   const [messages, setMessages] = useState<SwarmMessage[]>([]);
-  const [report, setReport] = useState<FinalReport | null>(null);
+  const [completedResultsUrl, setCompletedResultsUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [campaignFilter, setCampaignFilter] = useState("all");
+  const [previewCreative, setPreviewCreative] = useState<CreativeDoc | null>(null);
 
   useEffect(() => {
     const url = new URL("/api/catalog", window.location.origin);
-    url.searchParams.set("category", brief.category);
-    if (brief.language !== "any") url.searchParams.set("language", brief.language);
+    if (campaignFilter !== "all") url.searchParams.set("campaignId", campaignFilter);
     url.searchParams.set("limit", "120");
 
     fetch(url)
       .then((response) => response.json())
       .then((data) => setCatalog(data))
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load catalog."));
-  }, [brief.category, brief.language]);
+  }, [campaignFilter]);
+
+  const selectedCampaign = useMemo(
+    () => catalog?.campaigns.find((campaign) => campaign.id === campaignFilter) ?? null,
+    [catalog?.campaigns, campaignFilter],
+  );
+  const brief = useMemo(() => campaignBriefFromOption(selectedCampaign), [selectedCampaign]);
 
   const selectedCreatives = useMemo(() => {
-    const dataset = catalog?.creatives.filter((creative) => selectedIds.includes(creative.id)) ?? [];
+    const dataset = selectedDatasetCreatives.filter((creative) => selectedIds.includes(creative.id));
     return [...dataset, ...uploadedCreatives];
-  }, [catalog?.creatives, selectedIds, uploadedCreatives]);
+  }, [selectedDatasetCreatives, selectedIds, uploadedCreatives]);
 
   const filteredCreatives = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -107,6 +121,7 @@ export function CreativeSwarmApp() {
         [
           creative.appName,
           creative.advertiserName,
+          creative.campaignId,
           creative.features.headline,
           creative.features.ctaText,
           creative.format,
@@ -158,26 +173,38 @@ export function CreativeSwarmApp() {
       "image/*": [".png", ".jpg", ".jpeg", ".webp"],
     },
     maxFiles: 6,
-    disabled: isUploading || selectedCreatives.length >= 6,
+    disabled: !selectedCampaign || isUploading || selectedCreatives.length >= 6,
   });
 
-  const toggleCreative = (id: string) => {
-    setSelectedIds((current) => {
-      if (current.includes(id)) {
-        return current.filter((item) => item !== id);
-      }
-      if (current.length + uploadedCreatives.length >= 6) {
-        return current;
-      }
-      return [...current, id];
-    });
+  const toggleCreative = (creative: CreativeDoc) => {
+    if (selectedIds.includes(creative.id)) {
+      setSelectedIds((current) => current.filter((item) => item !== creative.id));
+      setSelectedDatasetCreatives((current) => current.filter((item) => item.id !== creative.id));
+      return;
+    }
+
+    if (selectedIds.length + uploadedCreatives.length >= 6) {
+      return;
+    }
+
+    setSelectedIds((current) => [...current, creative.id]);
+    setSelectedDatasetCreatives((current) => (current.some((item) => item.id === creative.id) ? current : [...current, creative]));
+  };
+
+  const updateCampaignFilter = (value: string) => {
+    setCampaignFilter(value);
+    setSelectedIds([]);
+    setSelectedDatasetCreatives([]);
+    setCompletedResultsUrl(null);
+    setMessages([]);
   };
 
   const analyze = async () => {
     setError(null);
-    setReport(null);
+    setCompletedResultsUrl(null);
     setMessages([]);
     setIsAnalyzing(true);
+    let resultsWindow = openWaitingResultsWindow();
 
     try {
       const createResponse = await fetch("/api/experiments", {
@@ -195,6 +222,13 @@ export function CreativeSwarmApp() {
       if (!createResponse.ok) {
         throw new Error(createPayload.error ?? "Could not create experiment.");
       }
+
+      const experimentId = createPayload.experiment.id;
+      writeResultsWindowStatus(
+        resultsWindow,
+        "Gemini swarm is analyzing",
+        "Keep this tab open. Results will load here when the swarm completes.",
+      );
 
       const analyzeResponse = await fetch(`/api/experiments/${createPayload.experiment.id}/analyze`, {
         method: "POST",
@@ -214,6 +248,7 @@ export function CreativeSwarmApp() {
       const reader = analyzeResponse.body.getReader();
       const decoder = new TextDecoder();
       let buffered = "";
+      let reportReceived = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -227,7 +262,7 @@ export function CreativeSwarmApp() {
           if (!line.trim()) continue;
           const event = JSON.parse(line);
           if (event.type === "report") {
-            setReport(event.report);
+            reportReceived = true;
           } else if (event.type === "error") {
             setError(event.message);
             setMessages((current) => [...current, { id: crypto.randomUUID(), type: "error", message: event.message }]);
@@ -236,14 +271,32 @@ export function CreativeSwarmApp() {
           }
         }
       }
+
+      if (!reportReceived) {
+        throw new Error("Analysis finished without a results report.");
+      }
+
+      const resultsUrl = `/experiments/${experimentId}/results`;
+      setCompletedResultsUrl(resultsUrl);
+
+      if (resultsWindow && !resultsWindow.closed) {
+        resultsWindow.location.href = resultsUrl;
+      } else {
+        resultsWindow = window.open(resultsUrl, "_blank", "noopener,noreferrer");
+        if (!resultsWindow) {
+          window.location.href = resultsUrl;
+        }
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed.");
+      const message = err instanceof Error ? err.message : "Analysis failed.";
+      setError(message);
+      writeResultsWindowStatus(resultsWindow, "Analysis failed", message);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const canAnalyze = selectedCreatives.length >= 2 && selectedCreatives.length <= 6 && projectedViews > 0 && !isAnalyzing;
+  const canAnalyze = Boolean(selectedCampaign) && selectedCreatives.length >= 2 && selectedCreatives.length <= 6 && projectedViews > 0 && !isAnalyzing;
 
   return (
     <main className="min-h-screen bg-pp-bg text-pp-white">
@@ -255,12 +308,13 @@ export function CreativeSwarmApp() {
               Creative Swarm Copilot
             </div>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-pp-white">
-              Campaign Brief
+              Creative Library
             </h1>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <AgentInputModeToggle value={analysisInputMode} onChange={setAnalysisInputMode} disabled={isAnalyzing} />
+              <ProjectedViewsControl value={projectedViews} onChange={setProjectedViews} disabled={isAnalyzing} />
               <button
                 type="button"
                 onClick={analyze}
@@ -273,10 +327,16 @@ export function CreativeSwarmApp() {
               </button>
             </div>
             {analysisInputMode === "image_only" ? (
-              <p className="max-w-[440px] text-xs text-pp-muted">
-                Agents see only image + brief. No historical metrics, benchmarks, or similar creatives are sent.
+              <p className="max-w-[480px] text-xs text-pp-muted">
+                Pre-launch creative read: uses only the image and campaign context, without KPI benchmarks or similar-ad history.
               </p>
-            ) : null}
+            ) : selectedCampaign ? (
+              <p className="max-w-[480px] text-xs text-pp-muted">
+                Performance-grounded decision: combines creative review with historical KPIs, benchmarks, and similar ads.
+              </p>
+            ) : (
+              <p className="max-w-[440px] text-xs text-pp-muted">Choose a campaign in the Creative Library to use its targeting and objective for analysis.</p>
+            )}
           </div>
         </header>
 
@@ -287,32 +347,39 @@ export function CreativeSwarmApp() {
           </div>
         ) : null}
 
-        <section className="grid gap-5 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <section className="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="flex flex-col gap-4">
-            <BriefPanel catalog={catalog} brief={brief} setBrief={setBrief} projectedViews={projectedViews} setProjectedViews={setProjectedViews} />
             <SelectedPanel
               creatives={selectedCreatives}
               onRemove={(creative) => {
                 if (creative.source === "dataset") {
                   setSelectedIds((current) => current.filter((id) => id !== creative.id));
+                  setSelectedDatasetCreatives((current) => current.filter((item) => item.id !== creative.id));
                 } else {
                   setUploadedCreatives((current) => current.filter((item) => item.id !== creative.id));
                 }
               }}
             />
-            <UploadPanel dropzone={dropzone} isUploading={isUploading} disabled={selectedCreatives.length >= 6} />
+            <UploadPanel dropzone={dropzone} isUploading={isUploading} disabled={!selectedCampaign || selectedCreatives.length >= 6} />
+            <SwarmPersonalitiesPanel agents={swarmAgents} />
           </aside>
 
           <div className="flex flex-col gap-5">
             <CreativeLibrary
               creatives={filteredCreatives}
+              campaignOptions={catalog?.campaigns ?? []}
+              selectedCampaign={selectedCampaign}
+              campaignFilter={campaignFilter}
+              setCampaignFilter={updateCampaignFilter}
               selectedIds={selectedIds}
               query={query}
               setQuery={setQuery}
               toggleCreative={toggleCreative}
+              previewCreative={setPreviewCreative}
             />
-            <SwarmRoom messages={messages} isAnalyzing={isAnalyzing} />
-            <ResultsDashboard report={report} creatives={selectedCreatives} brief={brief} analysisInputMode={analysisInputMode} />
+            <CreativePreviewModal creative={previewCreative} onClose={() => setPreviewCreative(null)} />
+            <SwarmRoom messages={messages} creatives={selectedCreatives} isAnalyzing={isAnalyzing} />
+            <AnalysisRedirectPanel resultsUrl={completedResultsUrl} isAnalyzing={isAnalyzing} />
           </div>
         </section>
       </div>
@@ -330,13 +397,13 @@ function AgentInputModeToggle({
   disabled: boolean;
 }) {
   const options: Array<{ value: AnalysisInputMode; label: string }> = [
-    { value: "evidence", label: "Evidence" },
-    { value: "image_only", label: "Image only" },
+    { value: "evidence", label: "KPI-backed" },
+    { value: "image_only", label: "Creative-only" },
   ];
 
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted sm:inline">Agent Input</span>
+      <span className="hidden text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted sm:inline">Decision Lens</span>
       <div className="inline-flex h-11 items-center rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated p-1">
         {options.map((option) => (
           <button
@@ -357,67 +424,60 @@ function AgentInputModeToggle({
   );
 }
 
-function BriefPanel({
-  catalog,
-  brief,
-  setBrief,
-  projectedViews,
-  setProjectedViews,
+function ProjectedViewsControl({
+  value,
+  onChange,
+  disabled,
 }: {
-  catalog: Catalog | null;
-  brief: CampaignBrief;
-  setBrief: (brief: CampaignBrief) => void;
-  projectedViews: number;
-  setProjectedViews: (projectedViews: number) => void;
+  value: number;
+  onChange: (projectedViews: number) => void;
+  disabled: boolean;
 }) {
-  const update = (key: keyof CampaignBrief, value: string) => setBrief({ ...brief, [key]: value });
-  const updateProjectedViews = (value: number) => {
-    if (!Number.isFinite(value)) return;
-    setProjectedViews(Math.max(1, Math.round(value)));
+  const updateProjectedViews = (nextValue: number) => {
+    if (!Number.isFinite(nextValue)) return;
+    onChange(Math.max(1, Math.round(nextValue)));
   };
 
   return (
-    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-      <div className="mb-4 flex items-center gap-2">
-        <Layers3 className="size-4 text-pp-violet" />
-        <h2 className="text-sm font-semibold text-pp-white">Brief</h2>
-      </div>
-      <div className="grid gap-3">
-        <Field label="Category">
-          <Select value={brief.category} onChange={(value) => update("category", value)} options={catalog?.filters.categories ?? ["gaming"]} />
-        </Field>
-        <Field label="Region">
-          <Select value={brief.region} onChange={(value) => update("region", value)} options={catalog?.filters.countries ?? ["global"]} />
-        </Field>
-        <Field label="Language">
-          <Select value={brief.language} onChange={(value) => update("language", value)} options={catalog?.filters.languages ?? ["any"]} />
-        </Field>
-        <Field label="OS">
-          <Select value={brief.os} onChange={(value) => update("os", value)} options={catalog?.filters.operatingSystems ?? ["any"]} />
-        </Field>
-        <Field label="Objective">
-          <Select value={brief.objective} onChange={(value) => update("objective", value)} options={catalog?.filters.objectives ?? ["installs"]} />
-        </Field>
-        <Field label="Audience">
-          <input
-            value={brief.audienceStyle ?? ""}
-            onChange={(event) => update("audienceStyle", event.target.value)}
-            className="h-10 rounded-[10px] border border-[var(--pp-border-strong)] bg-[rgba(7,9,18,0.72)] px-3 text-sm text-pp-white outline-none placeholder:text-pp-muted focus:border-pp-violet focus:shadow-[0_0_0_3px_rgba(123,63,242,0.16)]"
-          />
-        </Field>
-        <Field label="Projected views">
-          <input
-            type="number"
-            min={1}
-            step={1000}
-            value={projectedViews}
-            onChange={(event) => updateProjectedViews(event.currentTarget.valueAsNumber)}
-            className="h-10 rounded-[10px] border border-[var(--pp-border-strong)] bg-[rgba(7,9,18,0.72)] px-3 text-sm text-pp-white outline-none placeholder:text-pp-muted focus:border-pp-violet focus:shadow-[0_0_0_3px_rgba(123,63,242,0.16)]"
-          />
-        </Field>
-      </div>
-    </section>
+    <label className="grid h-11 min-w-[164px] grid-cols-[1fr_86px] items-center overflow-hidden rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated">
+      <span className="px-3 text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted">Views</span>
+      <input
+        type="number"
+        min={1}
+        step={1000}
+        value={value}
+        onChange={(event) => updateProjectedViews(event.currentTarget.valueAsNumber)}
+        disabled={disabled}
+        className="h-full min-w-0 border-l border-[var(--pp-border)] bg-transparent px-2 text-right text-sm font-semibold text-pp-white outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        aria-label="Projected views"
+      />
+    </label>
   );
+}
+
+function campaignBriefFromOption(campaign: CampaignOption | null): CampaignBrief {
+  if (!campaign) {
+    return defaultBrief;
+  }
+
+  return {
+    category: campaign.category,
+    region: campaign.countries[0] ?? "global",
+    language: "any",
+    os: campaign.os || "any",
+    objective: campaign.objective,
+    audienceStyle: `${campaign.appName} audience`,
+  };
+}
+
+function campaignContextSummary(campaign: CampaignOption) {
+  return [
+    campaign.category,
+    campaign.countries[0] ?? "global",
+    campaign.os || "any OS",
+    campaign.objective,
+    `${campaign.creativeCount} creatives`,
+  ];
 }
 
 function SelectedPanel({ creatives, onRemove }: { creatives: CreativeDoc[]; onRemove: (creative: CreativeDoc) => void }) {
@@ -495,18 +555,117 @@ function UploadPanel({
   );
 }
 
+function SwarmPersonalitiesPanel({ agents }: { agents: SwarmAgent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const specialists = agents.filter((agent) => agent.type === "specialist");
+  const personas = agents.filter((agent) => agent.type === "persona");
+
+  return (
+    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Bot className="size-4 text-pp-violet" />
+          <h2 className="text-sm font-semibold text-pp-white">Swarm Personalities</h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="inline-flex h-8 items-center gap-2 rounded-[8px] border border-[var(--pp-border-strong)] bg-pp-elevated px-2.5 text-xs font-medium text-pp-muted transition hover:text-pp-white"
+          aria-expanded={expanded}
+        >
+          {agents.length}
+          <ChevronRight className={cn("size-3.5 transition", expanded && "rotate-90 text-pp-violet")} />
+        </button>
+      </div>
+
+      <p className="text-xs text-pp-muted">{personas.length} personas and {specialists.length} specialists review each selected variant.</p>
+
+      <AnimatePresence initial={false}>
+        {expanded ? (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-3 grid gap-3">
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">Persona lenses</p>
+                <div className="grid gap-2">
+                  {personas.map((agent) => (
+                    <SwarmPersonalityRow key={agent.name} agent={agent} />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">Specialist reviewers</p>
+                <div className="grid gap-2">
+                  {specialists.map((agent) => (
+                    <SwarmPersonalityRow key={agent.name} agent={agent} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </section>
+  );
+}
+
+function SwarmPersonalityRow({ agent }: { agent: SwarmAgent }) {
+  const isPersona = agent.type === "persona";
+
+  return (
+    <div className="grid grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-[10px] border border-[var(--pp-border)] bg-pp-elevated p-2">
+      <div
+        className={cn(
+          "inline-flex size-10 items-center justify-center overflow-hidden rounded-[8px] border",
+          isPersona ? "border-pp-violet/30 bg-pp-bg" : "border-[var(--pp-border-strong)] bg-pp-panel text-pp-lavender",
+        )}
+      >
+        {isPersona ? (
+          <Image src={personaIconFor(agent.name)} alt="" width={40} height={40} className="size-10 object-cover" />
+        ) : (
+          <MessageSquareText className="size-4" />
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-medium text-pp-white">{agent.name}</p>
+          <span className="shrink-0 rounded-[6px] bg-pp-purple/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-pp-lavender">
+            {agent.type}
+          </span>
+        </div>
+        <p className="mt-1 line-clamp-2 text-xs text-pp-muted">{agent.role}</p>
+      </div>
+    </div>
+  );
+}
+
 function CreativeLibrary({
   creatives,
+  campaignOptions,
+  selectedCampaign,
+  campaignFilter,
+  setCampaignFilter,
   selectedIds,
   query,
   setQuery,
   toggleCreative,
+  previewCreative,
 }: {
   creatives: CreativeDoc[];
+  campaignOptions: CampaignOption[];
+  selectedCampaign: CampaignOption | null;
+  campaignFilter: string;
+  setCampaignFilter: (value: string) => void;
   selectedIds: string[];
   query: string;
   setQuery: (value: string) => void;
-  toggleCreative: (id: string) => void;
+  toggleCreative: (creative: CreativeDoc) => void;
+  previewCreative: (creative: CreativeDoc) => void;
 }) {
   return (
     <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
@@ -514,67 +673,206 @@ function CreativeLibrary({
         <div className="flex items-center gap-2">
           <FileImage className="size-4 text-pp-violet" />
           <h2 className="text-sm font-semibold text-pp-white">Creative Library</h2>
+          <span className="text-xs font-medium text-pp-muted">{creatives.length}</span>
         </div>
-        <label className="flex h-10 w-full items-center gap-2 rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated px-3 md:w-80">
-          <Search className="size-4 text-pp-muted" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search creatives"
-            className="min-w-0 flex-1 bg-transparent text-sm text-pp-white outline-none placeholder:text-pp-muted"
-          />
-        </label>
+        <div className="grid w-full gap-2 md:w-auto md:grid-cols-[minmax(220px,300px)_minmax(240px,360px)]">
+          <select
+            value={campaignFilter}
+            onChange={(event) => setCampaignFilter(event.target.value)}
+            className="h-10 min-w-0 rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated px-3 text-sm text-pp-white outline-none focus:border-pp-violet"
+            aria-label="Filter creatives by campaign"
+          >
+            <option value="all">All campaigns</option>
+            {campaignOptions.map((campaign) => (
+              <option key={campaign.id} value={campaign.id}>
+                {campaignLabel(campaign)}
+              </option>
+            ))}
+          </select>
+          <label className="flex h-10 min-w-0 items-center gap-2 rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated px-3">
+            <Search className="size-4 shrink-0 text-pp-muted" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search creatives"
+              className="min-w-0 flex-1 bg-transparent text-sm text-pp-white outline-none placeholder:text-pp-muted"
+            />
+          </label>
+        </div>
       </div>
+      {selectedCampaign ? (
+        <div className="mb-4 flex flex-col gap-2 rounded-[10px] border border-pp-purple/20 bg-pp-purple/10 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-pp-white">{selectedCampaign.appName}</p>
+            <p className="truncate text-xs text-pp-muted">{selectedCampaign.advertiserName}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {campaignContextSummary(selectedCampaign).map((item) => (
+              <Badge key={item}>{item}</Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="grid max-h-[520px] gap-3 overflow-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {creatives.map((creative, index) => {
-          const selected = selectedIds.includes(creative.id);
-          return (
-            <button
-              type="button"
-              key={creative.id}
-              onClick={() => toggleCreative(creative.id)}
-              className={cn(
-                "grid grid-cols-[74px_minmax(0,1fr)] gap-3 rounded-[10px] border p-2 text-left transition hover:-translate-y-0.5",
-                selected
-                  ? "border-pp-purple bg-pp-purple/10"
-                  : "border-[var(--pp-border)] hover:border-[var(--pp-border-strong)] hover:bg-pp-elevated",
-              )}
-            >
-              <Image
-                src={creative.thumbnailUrl ?? creative.assetUrl}
-                alt=""
-                width={74}
-                height={112}
-                loading={index < 6 ? "eager" : "lazy"}
-                className="h-28 w-[74px] rounded-[6px] object-cover"
-              />
-              <div className="min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="truncate text-sm font-semibold text-pp-white">{creative.appName}</p>
-                  {selected ? <Check className="size-4 shrink-0 text-pp-violet" /> : null}
+        {creatives.length ? (
+          creatives.map((creative, index) => {
+            const selected = selectedIds.includes(creative.id);
+            return (
+              <article
+                key={creative.id}
+                className={cn(
+                  "grid grid-cols-[74px_minmax(0,1fr)] gap-3 rounded-[10px] border p-2 text-left transition hover:-translate-y-0.5",
+                  selected
+                    ? "border-pp-purple bg-pp-purple/10"
+                    : "border-[var(--pp-border)] hover:border-[var(--pp-border-strong)] hover:bg-pp-elevated",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => previewCreative(creative)}
+                  className="group relative h-28 w-[74px] overflow-hidden rounded-[6px] bg-pp-elevated text-left"
+                  aria-label={`Preview ${creative.appName ?? "creative"}`}
+                >
+                  <Image
+                    src={creative.thumbnailUrl ?? creative.assetUrl}
+                    alt=""
+                    width={74}
+                    height={112}
+                    loading={index < 6 ? "eager" : "lazy"}
+                    className="h-28 w-[74px] object-cover transition group-hover:scale-105"
+                  />
+                  <span className="absolute inset-x-1 bottom-1 inline-flex h-7 items-center justify-center rounded-[6px] bg-pp-bg/80 text-pp-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                    <Maximize2 className="size-3.5" />
+                  </span>
+                </button>
+                <div className="min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="truncate text-sm font-semibold text-pp-white">{creative.appName}</p>
+                    <button
+                      type="button"
+                      onClick={() => toggleCreative(creative)}
+                      className={cn(
+                        "inline-flex h-7 shrink-0 items-center gap-1 rounded-[7px] border px-2 text-xs font-medium transition",
+                        selected
+                          ? "border-pp-purple/40 bg-pp-purple/20 text-pp-lavender"
+                          : "border-[var(--pp-border-strong)] text-pp-muted hover:text-pp-white",
+                      )}
+                      aria-pressed={selected}
+                    >
+                      {selected ? <Check className="size-3.5" /> : null}
+                      {selected ? "Selected" : "Select"}
+                    </button>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-xs text-pp-secondary">{creative.features.headline}</p>
+                  <p className="mt-1 truncate text-[11px] text-pp-muted">{creative.campaignId}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <Badge>{creative.format}</Badge>
+                    <Badge>{creative.features.ctaText || "no CTA"}</Badge>
+                    <Badge>{creative.metricsSummary?.creativeStatus ?? "unknown"}</Badge>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-pp-muted">
+                    <span>CTR {formatPct(creative.metricsSummary?.ctr, 2)}</span>
+                    <span>CVR {formatPct(creative.metricsSummary?.cvr, 1)}</span>
+                    <span>Clutter {metric(creative.features.visualClutter)}</span>
+                    <span>Novelty {metric(creative.features.noveltyScore)}</span>
+                  </div>
                 </div>
-                <p className="mt-1 line-clamp-2 text-xs text-pp-secondary">{creative.features.headline}</p>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  <Badge>{creative.format}</Badge>
-                  <Badge>{creative.features.ctaText || "no CTA"}</Badge>
-                  <Badge>{creative.metricsSummary?.creativeStatus ?? "unknown"}</Badge>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-pp-muted">
-                  <span>CTR {formatPct(creative.metricsSummary?.ctr, 2)}</span>
-                  <span>CVR {formatPct(creative.metricsSummary?.cvr, 1)}</span>
-                  <span>Clutter {metric(creative.features.visualClutter)}</span>
-                  <span>Novelty {metric(creative.features.noveltyScore)}</span>
-                </div>
-              </div>
-            </button>
-          );
-        })}
+              </article>
+            );
+          })
+        ) : (
+          <div className="rounded-[10px] border border-dashed border-[var(--pp-border)] p-4 text-sm text-pp-muted sm:col-span-2 xl:col-span-3 2xl:col-span-4">
+            No creatives match the current campaign and search filters.
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnalyzing: boolean }) {
+function CreativePreviewModal({ creative, onClose }: { creative: CreativeDoc | null; onClose: () => void }) {
+  useEffect(() => {
+    if (!creative) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [creative, onClose]);
+
+  return (
+    <AnimatePresence>
+      {creative ? (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-pp-bg/90 p-4 backdrop-blur-sm"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        >
+          <motion.section
+            className="grid max-h-[94vh] w-full max-w-6xl overflow-hidden rounded-[16px] border border-[var(--pp-border)] bg-pp-panel shadow-panel lg:grid-cols-[minmax(0,1fr)_320px]"
+            initial={{ scale: 0.98, y: 12 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.98, y: 12 }}
+            onClick={(event) => event.stopPropagation()}
+            aria-modal="true"
+            role="dialog"
+            aria-label="Creative preview"
+          >
+            <div className="flex min-h-[320px] items-center justify-center bg-pp-bg p-4">
+              <Image
+                src={creative.assetUrl}
+                alt={creative.features.headline || creative.appName || "Creative preview"}
+                width={Math.max(creative.features.width ?? 1200, 1)}
+                height={Math.max(creative.features.height ?? 1600, 1)}
+                sizes="(max-width: 768px) 96vw, 70vw"
+                className="max-h-[78vh] w-auto max-w-full rounded-[8px] object-contain"
+              />
+            </div>
+            <aside className="flex min-h-0 flex-col border-t border-[var(--pp-border)] p-4 lg:border-l lg:border-t-0">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-pp-violet">Full Preview</p>
+                  <h2 className="mt-1 truncate text-lg font-semibold text-pp-white">{creative.appName ?? "Creative"}</h2>
+                  <p className="mt-1 truncate text-sm text-pp-muted">{creative.advertiserName ?? creative.campaignId ?? "Dataset creative"}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex size-9 shrink-0 items-center justify-center rounded-[8px] border border-[var(--pp-border-strong)] text-pp-muted transition hover:text-pp-white"
+                  aria-label="Close preview"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              <div className="grid gap-2 text-sm">
+                <PreviewRow label="Campaign" value={creative.campaignId ?? "unknown"} />
+                <PreviewRow label="Format" value={creative.format} />
+                <PreviewRow label="CTA" value={creative.features.ctaText || "none detected"} />
+                <PreviewRow label="Headline" value={creative.features.headline || "none detected"} />
+                <PreviewRow label="Size" value={creative.features.width && creative.features.height ? `${creative.features.width} x ${creative.features.height}` : "unknown"} />
+                <PreviewRow label="Status" value={creative.metricsSummary?.creativeStatus ?? "unknown"} />
+              </div>
+            </aside>
+          </motion.section>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+function PreviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 rounded-[8px] bg-pp-elevated px-3 py-2">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">{label}</span>
+      <span className="break-words text-pp-secondary">{value}</span>
+    </div>
+  );
+}
+
+function SwarmRoom({ messages, creatives, isAnalyzing }: { messages: SwarmMessage[]; creatives: CreativeDoc[]; isAnalyzing: boolean }) {
   const visible = messages.slice(-18);
   return (
     <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-elevated p-4 shadow-panel">
@@ -585,47 +883,37 @@ function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnal
         </div>
         {isAnalyzing ? <Loader2 className="size-4 animate-spin text-pp-violet" /> : null}
       </div>
-      <div className="grid max-h-80 gap-2 overflow-auto pr-1 lg:grid-cols-2">
+      <div className="grid max-h-[440px] gap-3 overflow-auto pr-1 xl:grid-cols-2">
         <AnimatePresence initial={false}>
           {visible.length ? (
-            visible.map((message) => (
-              <motion.div
-                key={message.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                className="rounded-[10px] border border-[var(--pp-border)] bg-pp-panel/80 p-3"
-              >
-                {message.type === "agent" ? (
-                  <>
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-pp-lavender">
-                      <span className="inline-flex items-center gap-2">
-                        <MessageSquareText className="size-3.5" />
-                        {message.review.agentName}
-                      </span>
-                      <BehaviorBadge state={message.review.behavior.primaryState} />
-                    </div>
-                    <p className="mt-2 text-sm text-pp-white">{message.review.reasoning}</p>
-                    <p className="mt-2 text-xs text-pp-secondary">{message.review.behavior.rationale}</p>
-                    <p className="mt-2 text-xs text-pp-muted">{behaviorMix(message.review.behavior.probabilities)}</p>
-                    <p className="mt-2 text-xs text-pp-muted">{message.review.suggestedEdit}</p>
-                  </>
-                ) : message.type === "evidence" ? (
-                  <>
-                    <div className="flex items-center gap-2 text-xs font-semibold text-pp-info">
-                      <BarChart3 className="size-3.5" />
-                      {message.pack.variantLabel}
-                    </div>
-                    <p className="mt-2 text-sm text-pp-white">{message.pack.facts[1]}</p>
-                    <p className="mt-2 text-xs text-pp-muted">{message.pack.benchmark.contextLabel}</p>
-                  </>
-                ) : message.type === "error" ? (
-                  <p className="text-sm text-pp-error">{message.message}</p>
-                ) : (
-                  <p className="text-sm text-pp-secondary">{message.message}</p>
-                )}
-              </motion.div>
-            ))
+            visible.map((message) => {
+              if (message.type === "agent") {
+                return <AgentSwarmCard key={message.id} review={message.review} creatives={creatives} />;
+              }
+
+              if (message.type === "evidence") {
+                return <EvidenceSwarmCard key={message.id} pack={message.pack} creatives={creatives} />;
+              }
+
+              if (message.type === "decay") {
+                return <DecaySwarmCard key={message.id} curves={message.curves} />;
+              }
+
+              return (
+                <motion.div
+                  key={message.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className={cn(
+                    "rounded-[10px] border p-3",
+                    message.type === "error" ? "border-pp-error/30 bg-pp-error/10 text-pp-error" : "border-[var(--pp-border)] bg-pp-panel/80 text-pp-secondary",
+                  )}
+                >
+                  <p className="text-sm">{message.message}</p>
+                </motion.div>
+              );
+            })
           ) : (
             <div className="rounded-[10px] border border-[var(--pp-border)] bg-pp-panel/80 p-3 text-sm text-pp-secondary">Awaiting analysis.</div>
           )}
@@ -635,420 +923,190 @@ function SwarmRoom({ messages, isAnalyzing }: { messages: SwarmMessage[]; isAnal
   );
 }
 
-function ResultsDashboard({
-  report,
-  creatives,
-  brief,
-  analysisInputMode,
-}: {
-  report: FinalReport | null;
-  creatives: CreativeDoc[];
-  brief: CampaignBrief;
-  analysisInputMode: AnalysisInputMode;
-}) {
-  if (!report) {
-    return (
-      <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-        <div className="flex items-center gap-2">
-          <FlaskConical className="size-4 text-pp-violet" />
-          <h2 className="text-sm font-semibold text-pp-white">Results</h2>
-        </div>
-        <div className="mt-3 rounded-[10px] border border-dashed border-[var(--pp-border)] p-4 text-sm text-pp-muted">
-          Ranking, X-ray, and test plan appear after analysis.
-        </div>
-      </section>
-    );
-  }
-
-  const chartData = report.ranking.map((item) => ({
-    name: labelFor(item.variantId, creatives),
-    score: item.score,
-    health: item.creativeHealth,
-  }));
-  const fatigueByVariant = new Map(report.fatigueProfiles.map((profile) => [profile.creativeId, profile]));
+function AgentSwarmCard({ review, creatives }: { review: AgentReview; creatives: CreativeDoc[] }) {
+  const isPersona = review.agentType === "persona";
+  const variantLabel = labelFor(review.variantId, creatives);
+  const iconSrc = isPersona ? personaIconFor(review.agentName) : null;
 
   return (
-    <section className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
-      <div className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-        <div className="mb-4 flex items-center gap-2">
-          <BarChart3 className="size-4 text-pp-violet" />
-          <h2 className="text-sm font-semibold text-pp-white">Ranking Dashboard</h2>
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className={cn(
+        "rounded-[12px] border p-3",
+        isPersona ? "border-pp-violet/30 bg-pp-purple/10" : "border-[var(--pp-border)] bg-pp-panel/80",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            "inline-flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border",
+            isPersona ? "border-pp-violet/30 bg-pp-bg" : "border-[var(--pp-border-strong)] bg-pp-elevated text-pp-lavender",
+          )}
+        >
+          {iconSrc ? (
+            <Image src={iconSrc} alt="" width={44} height={44} className="size-11 object-cover" />
+          ) : (
+            <MessageSquareText className="size-5" />
+          )}
         </div>
-        <div className="mb-4 rounded-[10px] border border-pp-purple/20 bg-pp-purple/10 p-4">
-          <p className="text-xs font-semibold uppercase tracking-widest text-pp-violet">Champion</p>
-          <h3 className="mt-1 text-lg font-semibold text-pp-white">{report.champion}</h3>
-          <p className="mt-2 text-sm text-pp-secondary">{report.executiveSummary}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-[6px] bg-pp-bg px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-violet">
+              {variantLabel}
+            </span>
+            <span className="rounded-[6px] bg-pp-elevated px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">
+              {isPersona ? "Persona" : "Specialist"}
+            </span>
+            <BehaviorBadge state={review.behavior.primaryState} />
+          </div>
+          <h3 className="mt-2 truncate text-sm font-semibold text-pp-white">{review.agentName}</h3>
         </div>
-        <div className="h-64 min-w-0">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <BarChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(199,183,255,0.08)" />
-              <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#8e87a6" }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: "#8e87a6" }} axisLine={false} tickLine={false} />
-              <Tooltip
-                contentStyle={{ backgroundColor: "#111626", borderColor: "rgba(199,183,255,0.14)", borderRadius: "10px", color: "#f6f6fb" }}
-                labelStyle={{ color: "#c7b7ff", fontWeight: 600 }}
-                itemStyle={{ color: "#c9c3dd" }}
-                cursor={{ fill: "rgba(123,63,242,0.08)" }}
-              />
-              <Bar dataKey="score" fill="#7b3ff2" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="health" fill="#9d64f6" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="mt-4 overflow-hidden rounded-[10px] border border-[var(--pp-border)]">
-          {report.ranking.map((item) => {
-            const fatigue = fatigueByVariant.get(item.variantId);
-            return (
-              <div
-                key={item.variantId}
-                className="grid gap-3 border-b border-[var(--pp-border)] p-3 last:border-b-0 md:grid-cols-[56px_minmax(0,1fr)_120px_120px_120px_120px] md:items-center"
-              >
-                <div className="text-lg font-semibold text-pp-white">#{item.rank}</div>
-                <div>
-                  <p className="font-medium text-pp-white">{labelFor(item.variantId, creatives)}</p>
-                  <p className="text-sm text-pp-muted">{item.predictedOutcome}</p>
-                  {fatigue ? (
-                    <p className="mt-1 text-xs text-pp-muted">
-                      Fatigue Health <span className="font-semibold text-pp-secondary">{fatigue.healthScore}/100</span> | {fatigue.urgency}
-                    </p>
-                  ) : null}
-                  <p className="mt-1 text-xs text-pp-secondary">{item.behaviorSummary}</p>
-                  <p className="mt-1 text-xs text-pp-muted">{behaviorMix(item.behaviorProbabilities)}</p>
-                </div>
-                <Badge>{item.swarmConfidence} confidence</Badge>
-                <BehaviorBadge state={item.dominantBehaviorState} />
-                <Badge>{item.action}</Badge>
-                <Badge>{fatigue ? `fatigue ${fatigue.healthScore}/100` : "fatigue n/a"}</Badge>
-              </div>
-            );
-          })}
-        </div>
-        <PersonaActionForecastPanel report={report} creatives={creatives} />
       </div>
 
-      <div className="grid gap-5">
-        {report.fatigueProfiles?.length ? (
-          <FatiguePanel profiles={report.fatigueProfiles} creatives={creatives} />
-        ) : (
-          <FatigueUnavailablePanel analysisInputMode={analysisInputMode} />
-        )}
-        <InfoPanel icon={<Check className="size-4" />} title="Why It Wins" items={report.whyItWins} />
-        <InfoPanel icon={<ShieldAlert className="size-4" />} title="Risks" items={report.risks} />
-        <InfoPanel icon={<ChevronRight className="size-4" />} title="Next Actions" items={report.whatToDoNext} />
-        <CopilotPanel report={report} creatives={creatives} brief={brief} />
-        <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-          <div className="mb-3 flex items-center gap-2">
-            <FlaskConical className="size-4 text-pp-violet" />
-            <h2 className="text-sm font-semibold text-pp-white">A/B Test Plan</h2>
-          </div>
-          <div className="grid gap-2 text-sm">
-            {Object.entries(report.abTestPlan).map(([key, value]) => (
-              <div key={key} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 rounded-[8px] bg-pp-elevated px-3 py-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-pp-muted">{humanize(key)}</span>
-                <span className="text-pp-secondary">{value}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+      <div className="mt-3 grid gap-2">
+        <SwarmCardSection label="Observation" value={review.reasoning} strong />
+        <SwarmCardSection label="Behavior" value={review.behavior.rationale} />
+        <div className="grid gap-2 rounded-[8px] bg-pp-elevated px-3 py-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">Action Mix</span>
+          <span className="text-xs text-pp-secondary">{behaviorMix(review.behavior.probabilities)}</span>
+        </div>
+        <SwarmCardSection label="Suggested Edit" value={review.suggestedEdit} />
       </div>
-    </section>
+    </motion.article>
   );
 }
 
-function PersonaActionForecastPanel({ report, creatives }: { report: FinalReport; creatives: CreativeDoc[] }) {
-  const forecasts = report.ranking
-    .map((item) => report.personaActionForecast.find((forecast) => forecast.variantId === item.variantId))
-    .filter((forecast): forecast is NonNullable<typeof forecast> => Boolean(forecast));
-
-  if (!forecasts.length) {
-    return null;
-  }
+function EvidenceSwarmCard({ pack, creatives }: { pack: EvidencePack; creatives: CreativeDoc[] }) {
+  const variantLabel = labelFor(pack.variantId, creatives);
 
   return (
-    <section className="mt-5 rounded-[12px] border border-[var(--pp-border)] bg-pp-elevated p-4">
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-pp-white">Persona Action Forecast</h2>
-          <p className="mt-1 text-xs text-pp-muted">Expected actions from projected views and persona-weighted behavior probabilities.</p>
-        </div>
-        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted">
-          {formatNumber(forecasts[0]?.projectedViews)} views
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className="rounded-[12px] border border-pp-info/25 bg-pp-info/10 p-3"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-2 rounded-[6px] bg-pp-bg px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-info">
+          <BarChart3 className="size-3.5" />
+          {variantLabel}
+        </span>
+        <span className="rounded-[6px] bg-pp-elevated px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">Evidence</span>
+      </div>
+      <h3 className="mt-2 text-sm font-semibold text-pp-white">{pack.variantLabel}</h3>
+      <p className="mt-2 text-sm text-pp-secondary">{pack.facts[1] ?? pack.facts[0] ?? "Evidence pack prepared."}</p>
+      <p className="mt-2 text-xs text-pp-muted">{pack.benchmark.contextLabel}</p>
+    </motion.article>
+  );
+}
+
+function DecaySwarmCard({ curves }: { curves: SimulatedDecayCurve[] }) {
+  const earliestDay = curves.length ? Math.min(...curves.map((curve) => curve.fatiguePredictionDay)) : null;
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className="rounded-[12px] border border-pp-violet/25 bg-pp-purple/10 p-3"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-2 rounded-[6px] bg-pp-bg px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-violet">
+          <FlaskConical className="size-3.5" />
+          Fatigue Simulation
+        </span>
+        <span className="rounded-[6px] bg-pp-elevated px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">
+          14 days
         </span>
       </div>
-      <div className="grid gap-4">
-        {forecasts.map((forecast) => (
-          <div key={forecast.variantId} className="rounded-[10px] border border-[var(--pp-border)] bg-pp-panel/70 p-3">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="font-medium text-pp-white">{labelFor(forecast.variantId, creatives)}</p>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {forecastActionStates.map((action) => (
-                  <div key={action} className="rounded-[8px] bg-pp-elevated px-3 py-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">{humanizeBehavior(action)}</p>
-                    <p className="text-sm font-semibold text-pp-white">{formatNumber(forecast.totals[action])}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[620px] border-collapse text-left text-xs">
-                <thead className="text-pp-muted">
-                  <tr className="border-b border-[var(--pp-border)]">
-                    <th className="py-2 pr-3 font-semibold">Persona</th>
-                    <th className="px-3 py-2 font-semibold">Weight</th>
-                    {forecastActionStates.map((action) => (
-                      <th key={action} className="px-3 py-2 font-semibold">
-                        {humanizeBehavior(action)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="text-pp-secondary">
-                  {forecast.personas.map((persona) => (
-                    <tr key={persona.agentName} className="border-b border-[var(--pp-border)] last:border-b-0">
-                      <td className="py-2 pr-3 font-medium text-pp-white">{persona.agentName}</td>
-                      <td className="px-3 py-2">{formatPct(persona.weight, 1)}</td>
-                      {forecastActionStates.map((action) => (
-                        <td key={action} className="px-3 py-2">
-                          {formatNumber(persona.expectedActions[action])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
+      <p className="mt-2 text-sm text-pp-white">
+        {curves.length} variant{curves.length === 1 ? "" : "s"} projected with CTR decay bands.
+      </p>
+      <p className="mt-2 text-xs text-pp-muted">
+        Earliest predicted 30% CTR drop: {earliestDay ? `day ${earliestDay}` : "n/a"}.
+      </p>
+    </motion.article>
   );
 }
 
-function CopilotPanel({ report, creatives, brief }: { report: FinalReport; creatives: CreativeDoc[]; brief: CampaignBrief }) {
-  const [question, setQuestion] = useState("Why did the losing variant lose?");
-  const [answer, setAnswer] = useState<CopilotAnswer | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function SwarmCardSection({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="grid gap-1 rounded-[8px] bg-pp-elevated px-3 py-2">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">{label}</span>
+      <span className={cn("text-sm", strong ? "text-pp-white" : "text-pp-secondary")}>{value}</span>
+    </div>
+  );
+}
 
-  const ask = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/copilot", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question, report, creatives, brief }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error ?? "Copilot answer failed.");
-      }
-      setAnswer(payload.answer);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Copilot answer failed.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+function AnalysisRedirectPanel({ resultsUrl, isAnalyzing }: { resultsUrl: string | null; isAnalyzing: boolean }) {
   return (
     <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-      <div className="mb-3 flex items-center gap-2">
-        <MessageSquareText className="size-4 text-pp-violet" />
-        <h2 className="text-sm font-semibold text-pp-white">Copilot Q&A</h2>
-      </div>
-      <div className="flex gap-2">
-        <input
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          className="min-w-0 flex-1 rounded-[10px] border border-[var(--pp-border-strong)] bg-[rgba(7,9,18,0.72)] px-3 text-sm text-pp-white outline-none placeholder:text-pp-muted focus:border-pp-violet focus:shadow-[0_0_0_3px_rgba(123,63,242,0.16)]"
-        />
-        <button
-          type="button"
-          onClick={ask}
-          disabled={loading || !question.trim()}
-          className="inline-flex h-10 items-center gap-2 rounded-[10px] border border-pp-lavender/25 bg-gradient-to-br from-pp-purple to-pp-violet px-3 text-sm font-medium text-pp-white shadow-glow transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          {loading ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
-          Ask
-        </button>
-      </div>
-      {error ? <p className="mt-3 text-sm text-pp-error">{error}</p> : null}
-      {answer ? (
-        <div className="mt-3 rounded-[10px] bg-pp-elevated p-3 text-sm text-pp-secondary">
-          <p>{answer.answer}</p>
-          <p className="mt-2 font-medium text-pp-white">{answer.nextAction}</p>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2">
+          {isAnalyzing ? <Loader2 className="size-4 animate-spin text-pp-violet" /> : <FlaskConical className="size-4 text-pp-violet" />}
+          <h2 className="text-sm font-semibold text-pp-white">Results Handoff</h2>
         </div>
-      ) : null}
+        {resultsUrl ? (
+          <a
+            href={resultsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-[10px] border border-pp-lavender/25 bg-pp-elevated px-4 text-sm font-medium text-pp-white transition hover:border-pp-lavender/40 hover:bg-pp-purple/15"
+          >
+            Open results
+            <ChevronRight className="size-4" />
+          </a>
+        ) : null}
+      </div>
+      <p className="mt-3 text-sm text-pp-secondary">
+        {isAnalyzing
+          ? "The swarm room stays here while Gemini runs. The separate results tab will load after the final report is saved."
+          : resultsUrl
+            ? "The completed report is available on its own page."
+            : "Select 2-6 variants and run the Gemini swarm to open a separate results page."}
+      </p>
     </section>
   );
 }
 
-function InfoPanel({ icon, title, items }: { icon: React.ReactNode; title: string; items: string[] }) {
-  return (
-    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-      <div className="mb-3 flex items-center gap-2 text-pp-violet">
-        {icon}
-        <h2 className="text-sm font-semibold text-pp-white">{title}</h2>
-      </div>
-      <ul className="grid gap-2 text-sm text-pp-secondary">
-        {items.map((item) => (
-          <li key={item} className="rounded-[8px] bg-pp-elevated px-3 py-2">
-            {item}
-          </li>
-        ))}
-      </ul>
-    </section>
+function openWaitingResultsWindow() {
+  const popup = window.open("about:blank", "_blank");
+  writeResultsWindowStatus(
+    popup,
+    "Preparing Gemini swarm",
+    "The results page will appear here when analysis completes.",
   );
+  return popup;
 }
 
-function FatigueUnavailablePanel({ analysisInputMode }: { analysisInputMode: AnalysisInputMode }) {
-  const message =
-    analysisInputMode === "image_only"
-      ? "Fatigue values are only computed in Evidence mode, because they use historical decay and similar-creative signals."
-      : "No fatigue profiles were returned for this run. Re-run the analysis to recompute evidence-mode fatigue values.";
+function writeResultsWindowStatus(target: Window | null, title: string, message: string) {
+  if (!target || target.closed) return;
 
-  return (
-    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-      <div className="mb-3 flex items-center gap-2">
-        <Activity className="size-4 text-pp-violet" />
-        <h2 className="text-sm font-semibold text-pp-white">Fatigue Forecast</h2>
-      </div>
-      <p className="text-sm text-pp-secondary">{message}</p>
-    </section>
-  );
+  try {
+    target.document.title = title;
+    target.document.body.innerHTML = `
+      <main style="min-height:100vh;margin:0;display:grid;place-items:center;background:#070912;color:#f6f6fb;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+        <section style="width:min(520px,calc(100vw - 48px));border:1px solid rgba(199,183,255,.16);border-radius:16px;background:#111626;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.32);">
+          <p style="margin:0 0 8px;color:#9d64f6;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;">Creative Swarm Copilot</p>
+          <h1 style="margin:0;color:#f6f6fb;font-size:22px;line-height:1.25;">${escapeHtml(title)}</h1>
+          <p style="margin:12px 0 0;color:#c9c3dd;font-size:14px;line-height:1.6;">${escapeHtml(message)}</p>
+        </section>
+      </main>
+    `;
+  } catch {
+    // Some browsers restrict writes to newly opened windows; navigation fallback still works.
+  }
 }
 
-function FatiguePanel({ profiles, creatives }: { profiles: FatigueProfile[]; creatives: CreativeDoc[] }) {
-  return (
-    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-      <div className="mb-3 flex items-center gap-2">
-        <Activity className="size-4 text-pp-violet" />
-        <h2 className="text-sm font-semibold text-pp-white">Fatigue Forecast</h2>
-      </div>
-      <div className="grid gap-3">
-        {profiles.map((profile, index) => {
-          const label = labelFor(profile.creativeId, creatives) || `Variant ${index + 1}`;
-          return (
-            <div key={profile.creativeId} className="rounded-[10px] border border-[var(--pp-border)] bg-pp-elevated p-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <span className="text-sm font-medium text-pp-white">{label}</span>
-                <UrgencyBadge urgency={profile.urgency} />
-              </div>
-
-              {/* Health score bar */}
-              <div className="mb-2">
-                <div className="mb-1 flex items-center justify-between text-xs text-pp-muted">
-                  <span>Fatigue Health</span>
-                  <span className="font-semibold text-pp-white">{profile.healthScore}/100</span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-pp-panel">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${profile.healthScore}%`,
-                      background: healthGradient(profile.healthScore),
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Key metrics row */}
-              <div className="mb-2 flex flex-wrap gap-3 text-xs text-pp-muted">
-                {profile.estimatedLifespanDays !== null && (
-                  <span>
-                    Expected lifespan:{" "}
-                    <span className="font-medium text-pp-secondary">{profile.estimatedLifespanDays}d</span>
-                  </span>
-                )}
-                {profile.ctrDecayPct !== null && (
-                  <span>
-                    CTR decay:{" "}
-                    <span className={cn("font-medium", Math.abs(profile.ctrDecayPct) > 0.5 ? "text-pp-error" : "text-pp-warning")}>
-                      {Math.round(Math.abs(profile.ctrDecayPct) * 100)}%
-                    </span>
-                  </span>
-                )}
-                <span className="capitalize text-pp-disabled">
-                  {profile.dataSource === "historical" ? "historical data" : profile.dataSource === "similarity-predicted" ? "similarity-predicted" : "visual estimate"}
-                </span>
-              </div>
-
-              {profile.visualRiskFactors.length > 0 && (
-                <ul className="mb-1 grid gap-1">
-                  {profile.visualRiskFactors.map((factor) => (
-                    <li key={factor} className="flex items-start gap-1.5 text-xs text-pp-muted">
-                      <span className="mt-0.5 shrink-0 text-pp-warning">&gt;</span>
-                      {factor}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {profile.visualStrengths.length > 0 && (
-                <ul className="grid gap-1">
-                  {profile.visualStrengths.map((factor) => (
-                    <li key={factor} className="flex items-start gap-1.5 text-xs text-pp-muted">
-                      <span className="mt-0.5 shrink-0 text-pp-success">+</span>
-                      {factor}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function UrgencyBadge({ urgency }: { urgency: FatigueProfile["urgency"] }) {
-  const styles: Record<FatigueProfile["urgency"], string> = {
-    HEALTHY: "bg-pp-success/15 text-pp-success border-pp-success/30",
-    WATCH: "bg-pp-warning/15 text-pp-warning border-pp-warning/30",
-    INTERVENE: "bg-[rgba(255,150,50,0.15)] text-[#ff9632] border-[rgba(255,150,50,0.3)]",
-    PAUSE: "bg-pp-error/15 text-pp-error border-pp-error/30",
-  };
-  return (
-    <span className={cn("inline-flex items-center rounded-[6px] border px-2 py-0.5 text-xs font-semibold", styles[urgency])}>
-      {urgency}
-    </span>
-  );
-}
-
-// Thresholds match scoreToUrgency() in lib/analysis/fatigue.ts
-function healthGradient(score: number): string {
-  if (score >= 70) return "linear-gradient(90deg, #58d68d, #58d68d)"; // HEALTHY
-  if (score >= 45) return "linear-gradient(90deg, #f5b041, #f5b041)"; // WATCH
-  if (score >= 25) return "linear-gradient(90deg, #ff9632, #ff9632)"; // INTERVENE
-  return "linear-gradient(90deg, #ff6b7a, #ff6b7a)";                   // PAUSE
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Select({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) {
-  return (
-    <select
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      className="h-10 rounded-[10px] border border-[var(--pp-border-strong)] bg-pp-elevated px-3 text-sm capitalize text-pp-white outline-none focus:border-pp-violet"
-    >
-      {options.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
-  );
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function Badge({ children }: { children: React.ReactNode }) {
@@ -1088,13 +1146,26 @@ function metric(value?: number | null) {
   return formatNumber(value, 2);
 }
 
+function campaignLabel(campaign: CampaignOption) {
+  return `${campaign.appName} - ${campaign.advertiserName} (${campaign.creativeCount})`;
+}
+
+function personaIconFor(agentName: string) {
+  const icons: Record<string, string> = {
+    "Low-Attention Scroller": "/icons/Artboard%207.png",
+    "Skeptical User": "/icons/Artboard%207%20copy.png",
+    "Reward-Seeking User": "/icons/Artboard%207%20copy%202.png",
+    "Practical Converter": "/icons/Artboard%207%20copy%203.png",
+    "Visual Trend Seeker": "/icons/Artboard%207%20copy%204.png",
+    "Category-Matched User": "/icons/Artboard%207%20copy%205.png",
+  };
+
+  return icons[agentName] ?? "/icons/Artboard%207.png";
+}
+
 function labelFor(variantId: string, creatives: CreativeDoc[]) {
   const index = creatives.findIndex((creative) => creative.id === variantId);
   return index >= 0 ? `Variant ${index + 1}` : variantId;
-}
-
-function humanize(value: string) {
-  return value.replace(/[A-Z]/g, (match) => ` ${match.toLowerCase()}`);
 }
 
 function humanizeBehavior(value: string) {

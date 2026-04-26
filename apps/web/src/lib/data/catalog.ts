@@ -5,35 +5,51 @@ export async function getCatalog(filters: {
   category?: string | null;
   language?: string | null;
   format?: string | null;
+  campaignId?: string | null;
   limit?: number | null;
 }) {
   const campaigns = loadCampaigns();
   const creatives = await getDatasetCreatives();
-  const filteredCreatives = creatives
+  const baseCreatives = creatives
     .filter((creative) => !filters.category || creative.category === filters.category)
     .filter((creative) => !filters.language || creative.language === filters.language)
-    .filter((creative) => !filters.format || creative.format === filters.format)
+    .filter((creative) => !filters.format || creative.format === filters.format);
+  const campaignCounts = new Map<string, number>();
+  baseCreatives.forEach((creative) => {
+    if (!creative.campaignId) return;
+    campaignCounts.set(creative.campaignId, (campaignCounts.get(creative.campaignId) ?? 0) + 1);
+  });
+
+  const filteredCreatives = baseCreatives
+    .filter((creative) => !filters.campaignId || creative.campaignId === filters.campaignId)
     .slice(0, filters.limit ?? 96);
 
   const countries = new Set<string>();
   const objectives = new Set<string>();
   const categories = new Set<string>();
   const operatingSystems = new Set<string>();
-  const campaignOptions = campaigns.slice(0, 60).map((campaign) => {
+  campaigns.forEach((campaign) => {
     campaign.countries.forEach((country) => countries.add(country));
     objectives.add(campaign.objective);
     categories.add(campaign.vertical);
     operatingSystems.add(campaign.targetOs);
-    return {
-      id: campaign.campaignId,
-      appName: campaign.appName,
-      advertiserName: campaign.advertiserName,
-      category: campaign.vertical,
-      objective: campaign.objective,
-      countries: campaign.countries,
-      os: campaign.targetOs,
-    };
   });
+
+  const campaignOptions = campaigns
+    .filter((campaign) => campaignCounts.has(campaign.campaignId))
+    .slice(0, 120)
+    .map((campaign) => {
+      return {
+        id: campaign.campaignId,
+        appName: campaign.appName,
+        advertiserName: campaign.advertiserName,
+        category: campaign.vertical,
+        objective: campaign.objective,
+        countries: campaign.countries,
+        os: campaign.targetOs,
+        creativeCount: campaignCounts.get(campaign.campaignId) ?? 0,
+      };
+    });
 
   creatives.forEach((creative) => {
     categories.add(creative.category);

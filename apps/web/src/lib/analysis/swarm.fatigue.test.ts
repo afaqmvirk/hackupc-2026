@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   buildEvidencePack: vi.fn(),
   generateJson: vi.fn(),
   getDatasetCreatives: vi.fn(),
+  simulateDecay: vi.fn(),
 }));
 type MetricsInput = Partial<NonNullable<CreativeDoc["metricsSummary"]>>;
 
@@ -16,6 +17,10 @@ vi.mock("@/lib/data/repository", () => ({
   getDatasetCreatives: mocks.getDatasetCreatives,
 }));
 
+vi.mock("@/lib/analysis/decay", () => ({
+  simulateDecay: mocks.simulateDecay,
+}));
+
 vi.mock("@/lib/analysis/gemini", () => ({
   generateJson: mocks.generateJson,
 }));
@@ -25,6 +30,7 @@ describe("evidence-mode fatigue orchestration", () => {
     mocks.buildEvidencePack.mockReset();
     mocks.generateJson.mockReset();
     mocks.getDatasetCreatives.mockReset();
+    mocks.simulateDecay.mockReset();
 
     const datasetVariant = creative("creative_a", "dataset", {
       creativeStatus: "fatigued",
@@ -49,6 +55,9 @@ describe("evidence-mode fatigue orchestration", () => {
       return Promise.resolve(evidencePack(datasetVariant));
     });
     mocks.getDatasetCreatives.mockResolvedValue([datasetVariant, similar]);
+    mocks.simulateDecay.mockImplementation((variant: CreativeDoc) =>
+      Promise.resolve(decayCurve(variant.id, variant.id === "creative_a" ? 8 : 6)),
+    );
     mocks.generateJson.mockImplementation(({ prompt }: { prompt: string }) => {
       if (prompt.includes("Evidence packs:")) {
         return Promise.resolve({
@@ -100,7 +109,7 @@ describe("evidence-mode fatigue orchestration", () => {
     });
   });
 
-  it("attaches one fatigue profile per variant in evidence mode", async () => {
+  it("attaches fatigue profiles and decay curves in evidence mode", async () => {
     const { analyzeExperimentWithSwarm } = await import("@/lib/analysis/swarm");
     const events: Array<{ type: string; message?: string }> = [];
     const result = await analyzeExperimentWithSwarm({
@@ -130,12 +139,33 @@ describe("evidence-mode fatigue orchestration", () => {
     });
 
     expect(result.report.fatigueProfiles).toHaveLength(2);
+    expect(result.report.decayCurves).toHaveLength(2);
+    expect(result.decayCurves).toHaveLength(2);
     expect(result.report.fatigueProfiles.map((profile) => profile.creativeId)).toEqual(["creative_a", "upload_b"]);
+    expect(result.report.ranking.map((item) => item.fatiguePredictionDay)).toEqual([8, 6]);
     expect(result.report.fatigueProfiles[0].dataSource).toBe("historical");
     expect(result.report.fatigueProfiles[1].dataSource).toBe("similarity-predicted");
+    expect(mocks.simulateDecay).toHaveBeenCalledTimes(2);
+    expect(events.some((event) => event.type === "decay")).toBe(true);
     expect(events.some((event) => event.message === "Computing fatigue forecasts from historical decay signals.")).toBe(true);
   });
 });
+
+function decayCurve(variantId: string, fatiguePredictionDay: number) {
+  return {
+    variantId,
+    ctrCurve: Array.from({ length: 14 }, (_, index) => 0.01 - index * 0.0002),
+    cvrCurve: Array.from({ length: 14 }, (_, index) => 0.03 - index * 0.0005),
+    bandLow: Array.from({ length: 14 }, (_, index) => 0.008 - index * 0.0001),
+    bandHigh: Array.from({ length: 14 }, (_, index) => 0.012 - index * 0.0001),
+    fatiguePredictionDay,
+    fatigueConfidence: "medium",
+    modelParams: {
+      weibullShape: 1.2,
+      weibullScale: 8,
+    },
+  };
+}
 
 function creative(
   id: string,

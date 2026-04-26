@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentReviewSchema, experimentSchema, finalReportSchema } from "@/lib/schemas";
+import { agentReviewSchema, experimentSchema, finalReportSchema, simulatedDecayCurveSchema } from "@/lib/schemas";
 
 const behavior = {
   primaryState: "click",
@@ -37,6 +37,37 @@ describe("behavior schemas", () => {
 
     const total = Object.values(review.behavior.probabilities).reduce((sum, value) => sum + value, 0);
     expect(total).toBeCloseTo(1, 3);
+    expect(review.directResponseIntent).toBe(0.5);
+  });
+
+  it("accepts bounded direct-response intent on agent reviews", () => {
+    const review = agentReviewSchema.parse({
+      agentName: "Performance Marketer",
+      agentType: "specialist",
+      variantId: "variant_a",
+      attention: 6,
+      clarity: 5,
+      trust: 4,
+      conversionIntent: 3,
+      directResponseIntent: 0.18,
+      fatigueRisk: "high",
+      recommendation: "edit",
+      behavior,
+      topPositive: "The image is visually clean.",
+      topConcern: "No product or CTA is obvious.",
+      suggestedEdit: "Add the app screen and a clear CTA.",
+      reasoning: "The creative is attractive but weak as direct response.",
+      evidenceRefs: [],
+    });
+
+    expect(review.conversionIntent).toBe(3);
+    expect(review.directResponseIntent).toBe(0.18);
+    expect(() =>
+      agentReviewSchema.parse({
+        ...review,
+        directResponseIntent: 1.2,
+      }),
+    ).toThrow();
   });
 
   it("rejects unknown behavior states", () => {
@@ -80,6 +111,7 @@ describe("behavior schemas", () => {
           topReasons: ["Clear CTA"],
           risks: ["Moderate fatigue risk"],
           recommendedEdits: ["Clarify terms"],
+          fatiguePredictionDay: 9,
         },
       ],
       champion: "Variant A",
@@ -138,8 +170,29 @@ describe("behavior schemas", () => {
     });
 
     expect(report.ranking[0].dominantBehaviorState).toBe("click");
+    expect(report.ranking[0].fatiguePredictionDay).toBe(9);
     expect(report.personaActionForecast[0].totals.convert).toBeGreaterThan(9000);
     expect(report.fatigueProfiles[0].urgency).toBe("WATCH");
+    expect(report.decayCurves).toEqual([]);
+  });
+
+  it("accepts simulated decay curves", () => {
+    const curve = simulatedDecayCurveSchema.parse({
+      variantId: "variant_a",
+      ctrCurve: Array.from({ length: 14 }, (_, index) => 0.01 - index * 0.0002),
+      cvrCurve: Array.from({ length: 14 }, (_, index) => 0.05 - index * 0.001),
+      bandLow: Array.from({ length: 14 }, (_, index) => 0.008 - index * 0.0001),
+      bandHigh: Array.from({ length: 14 }, (_, index) => 0.012 - index * 0.0001),
+      fatiguePredictionDay: 8,
+      fatigueConfidence: "medium",
+      modelParams: {
+        weibullShape: 1.2,
+        weibullScale: 8,
+      },
+    });
+
+    expect(curve.ctrCurve).toHaveLength(14);
+    expect(curve.fatiguePredictionDay).toBe(8);
   });
 
   it("defaults experiments to evidence input mode and projected views", () => {

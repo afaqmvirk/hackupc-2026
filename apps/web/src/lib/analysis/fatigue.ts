@@ -29,13 +29,13 @@ export function computeFatigueProfile(
   datasetLookup: Map<string, CreativeDoc>,
 ): FatigueProfile {
   if (creative.source === "dataset" && creative.metricsSummary) {
-    return computeDirectProfile(creative);
+    return computeDirectProfile(creative, evidencePack);
   }
 
   return computePredictedProfile(creative, evidencePack, datasetLookup);
 }
 
-function computeDirectProfile(creative: CreativeDoc): FatigueProfile {
+function computeDirectProfile(creative: CreativeDoc, evidencePack: EvidencePack): FatigueProfile {
   const metrics = creative.metricsSummary!;
   const status = metrics.creativeStatus ?? "stable";
   const statusBase = STATUS_BASE_HEALTH[status] ?? 50;
@@ -49,7 +49,7 @@ function computeDirectProfile(creative: CreativeDoc): FatigueProfile {
     creativeId: creative.id,
     healthScore,
     urgency: scoreToUrgency(healthScore),
-    estimatedLifespanDays: metrics.fatigueDay ?? null,
+    estimatedLifespanDays: resolveLifespanDays(metrics.fatigueDay, evidencePack.decayCurve?.fatiguePredictionDay),
     ctrDecayPct: metrics.ctrDecayPct ?? null,
     cvrDecayPct: metrics.cvrDecayPct ?? null,
     currentStatus: status,
@@ -57,6 +57,18 @@ function computeDirectProfile(creative: CreativeDoc): FatigueProfile {
     visualStrengths: strengths,
     dataSource: "historical",
   };
+}
+
+function resolveLifespanDays(observedDay?: number | null, simulatedDay?: number | null) {
+  if (typeof observedDay === "number" && Number.isFinite(observedDay) && observedDay > 0) {
+    return Math.round(observedDay);
+  }
+
+  if (typeof simulatedDay === "number" && Number.isFinite(simulatedDay) && simulatedDay > 0) {
+    return Math.round(simulatedDay);
+  }
+
+  return null;
 }
 
 function computePredictedProfile(
@@ -80,7 +92,12 @@ function computePredictedProfile(
       ? weightedMean(refsThatFatigued, (ref) => ref.doc.metricsSummary!.fatigueDay!)
       : DATASET_MEDIAN_FATIGUE_DAY;
 
-  const estimatedLifespanDays = Math.max(5, Math.round(baseLifespanDays * computeVisualLifespanMultiplier(creative.features)));
+  const visualEstimatedLifespanDays = Math.max(5, Math.round(baseLifespanDays * computeVisualLifespanMultiplier(creative.features)));
+  const simulatedFatigueDay = evidencePack.decayCurve?.fatiguePredictionDay;
+  const estimatedLifespanDays =
+    simulatedFatigueDay !== undefined
+      ? Math.max(1, Math.round(visualEstimatedLifespanDays * 0.65 + simulatedFatigueDay * 0.35))
+      : visualEstimatedLifespanDays;
   const validPerfRefs = refs.filter((ref) => {
     const perfScore = ref.doc.metricsSummary!.perfScore;
     return typeof perfScore === "number" && perfScore >= 0 && perfScore <= 1;

@@ -1,5 +1,11 @@
+const geminiApiKeys = parseGeminiApiKeys({
+  apiKeys: process.env.GEMINI_API_KEYS ?? process.env.GOOGLE_API_KEYS,
+  apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY,
+});
+
 export const config = {
-  geminiApiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY,
+  geminiApiKey: geminiApiKeys[0],
+  geminiApiKeys,
   swarmModel: process.env.GEMINI_SWARM_MODEL ?? "gemini-2.5-flash",
   aggregatorModel: process.env.GEMINI_AGGREGATOR_MODEL ?? "gemini-2.5-flash",
   geminiRequestStartIntervalMs: parseNonNegativeInteger(process.env.GEMINI_REQUEST_START_INTERVAL_MS, 5000),
@@ -9,12 +15,34 @@ export const config = {
   cvServiceUrl: process.env.CV_SERVICE_URL ?? "http://127.0.0.1:8001",
 };
 
-export function requireGeminiKey() {
-  if (!config.geminiApiKey) {
-    throw new Error("GEMINI_API_KEY is required for LLM-based swarm analysis.");
+export function requireGeminiKeys() {
+  if (config.geminiApiKeys.length === 0) {
+    throw new Error(
+      "GEMINI_API_KEY, GOOGLE_API_KEY, GEMINI_API_KEYS, or GOOGLE_API_KEYS is required for LLM-based swarm analysis.",
+    );
   }
 
-  return config.geminiApiKey;
+  return config.geminiApiKeys;
+}
+
+export function requireGeminiKey() {
+  return requireGeminiKeys()[0];
+}
+
+export function parseGeminiApiKeys({
+  apiKeys,
+  apiKey,
+}: {
+  apiKeys?: string;
+  apiKey?: string;
+}) {
+  const tokens = [apiKeys, apiKey]
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => value.split(/[\n,;]+/))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return [...new Set(tokens)];
 }
 
 function parseNonNegativeInteger(value: string | undefined, fallback: number) {

@@ -1,5 +1,5 @@
-import { CreativeSwarmApp } from "@/components/CreativeSwarmApp";
+import { SplashPage } from "@/components/SplashPage";
 
 export default function Home() {
-  return <CreativeSwarmApp />;
+  return <SplashPage />;
 }

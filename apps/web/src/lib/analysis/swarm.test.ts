@@ -22,6 +22,7 @@ function reviewWithBehavior(behavior: AgentReview["behavior"], overrides: Partia
     clarity: 5,
     trust: 5,
     conversionIntent: 5,
+    directResponseIntent: 0.5,
     fatigueRisk: "medium",
     recommendation: "edit",
     behavior,

@@ -27,6 +27,20 @@ describe("fatigue profiles", () => {
     expect(validUrgencies).toContain(profile.urgency);
   });
 
+  it("falls back to the simulated fatigue day when historical lifespan is missing", () => {
+    const creative = creativeDoc("500003", "dataset", {
+      creativeStatus: "stable",
+      ctrDecayPct: -0.28,
+      cvrDecayPct: -0.12,
+      fatigueDay: null,
+      perfScore: 0.66,
+    });
+    const profile = computeFatigueProfile(creative, evidencePack(creative, [], 9), new Map([[creative.id, creative]]));
+
+    expect(profile.dataSource).toBe("historical");
+    expect(profile.estimatedLifespanDays).toBe(9);
+  });
+
   it("uses similar creative decay data for uploaded creatives in evidence mode", () => {
     const upload = creativeDoc("upload_1", "upload", undefined, {
       noveltyScore: 0.75,
@@ -93,6 +107,7 @@ function creativeDoc(
 function evidencePack(
   creative: CreativeDoc,
   similarCreatives: Array<{ id: string; similarity: number }> = [],
+  fatiguePredictionDay?: number,
 ): EvidencePack {
   return {
     variantId: creative.id,
@@ -144,5 +159,22 @@ function evidencePack(
     },
     facts: [],
     warnings: [],
+    ...(fatiguePredictionDay
+      ? {
+          decayCurve: {
+            variantId: creative.id,
+            ctrCurve: Array.from({ length: 14 }, (_, index) => 0.02 - index * 0.0005),
+            cvrCurve: Array.from({ length: 14 }, (_, index) => 0.03 - index * 0.0004),
+            bandLow: Array.from({ length: 14 }, (_, index) => 0.018 - index * 0.0004),
+            bandHigh: Array.from({ length: 14 }, (_, index) => 0.022 - index * 0.0004),
+            fatiguePredictionDay,
+            fatigueConfidence: "medium",
+            modelParams: {
+              weibullShape: 1.2,
+              weibullScale: 9,
+            },
+          },
+        }
+      : {}),
   };
 }

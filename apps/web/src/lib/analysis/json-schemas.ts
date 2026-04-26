@@ -23,6 +23,7 @@ export const agentReviewJsonSchema = {
     "clarity",
     "trust",
     "conversionIntent",
+    "directResponseIntent",
     "fatigueRisk",
     "recommendation",
     "behavior",
@@ -40,6 +41,13 @@ export const agentReviewJsonSchema = {
     clarity: { type: "number", minimum: 0, maximum: 10 },
     trust: { type: "number", minimum: 0, maximum: 10 },
     conversionIntent: { type: "number", minimum: 0, maximum: 10 },
+    directResponseIntent: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description:
+        "Direct-response intent from 0.0 to 1.0. Score only the visible business action: product/app visibility, CTA clarity, offer specificity, and reason to tap. Plain brand or scenery with no product or CTA should be near 0.0.",
+    },
     fatigueRisk: { type: "string", enum: ["low", "medium", "high"] },
     recommendation: { type: "string", enum: ["scale", "test", "edit", "pivot", "pause"] },
     behavior: {
@@ -111,6 +119,7 @@ export const finalReportJsonSchema = {
           topReasons: { type: "array", items: { type: "string" } },
           risks: { type: "array", items: { type: "string" } },
           recommendedEdits: { type: "array", items: { type: "string" } },
+          fatiguePredictionDay: { type: "number", minimum: 1, maximum: 14 },
         },
       },
     },
@@ -141,6 +150,22 @@ export const finalReportJsonSchema = {
         stopCondition: { type: "string" },
         actionIfWinner: { type: "string" },
         actionIfLoser: { type: "string" },
+      },
+    },
+    decayCurves: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          variantId: { type: "string" },
+          ctrCurve: { type: "array", items: { type: "number" } },
+          cvrCurve: { type: "array", items: { type: "number" } },
+          bandLow: { type: "array", items: { type: "number" } },
+          bandHigh: { type: "array", items: { type: "number" } },
+          fatiguePredictionDay: { type: "number", minimum: 1, maximum: 14 },
+          fatigueConfidence: { type: "string", enum: ["low", "medium", "high"] },
+          modelParams: { type: "object", additionalProperties: { type: "number" } },
+        },
       },
     },
   },
