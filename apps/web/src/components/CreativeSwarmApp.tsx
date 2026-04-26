@@ -6,7 +6,6 @@ import { useDropzone } from "react-dropzone";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
-  BarChart3,
   Bot,
   Check,
   ChevronRight,
@@ -22,16 +21,14 @@ import {
 } from "lucide-react";
 import {
   defaultProjectedViews,
-  type AgentReview,
   type AnalysisInputMode,
   type CampaignBrief,
   type CreativeDoc,
-  type EvidencePack,
-  type SimulatedDecayCurve,
 } from "@/lib/schemas";
 import { swarmAgents, type SwarmAgent } from "@/lib/analysis/prompts";
+import { useSwarmStream } from "@/components/creative-swarm/useSwarmStream";
 import { WarRoomOverlay } from "@/components/war-room/WarRoomOverlay";
-import { cn, formatNumber, formatPct } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type Catalog = {
   filters: {
@@ -57,13 +54,6 @@ type CampaignOption = {
   creativeCount: number;
 };
 
-type SwarmMessage =
-  | { id: string; type: "status"; message: string }
-  | { id: string; type: "agent"; review: AgentReview }
-  | { id: string; type: "evidence"; pack: EvidencePack }
-  | { id: string; type: "decay"; curves: SimulatedDecayCurve[] }
-  | { id: string; type: "error"; message: string };
-
 const defaultBrief: CampaignBrief = {
   category: "gaming",
   region: "global",
@@ -80,20 +70,22 @@ export function CreativeSwarmApp() {
   const [uploadedCreatives, setUploadedCreatives] = useState<CreativeDoc[]>([]);
   const [analysisInputMode, setAnalysisInputMode] = useState<AnalysisInputMode>("evidence");
   const [projectedViews, setProjectedViews] = useState(defaultProjectedViews);
-  const [messages, setMessages] = useState<SwarmMessage[]>([]);
-  const [completedResultsUrl, setCompletedResultsUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [appError, setAppError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [previewCreative, setPreviewCreative] = useState<CreativeDoc | null>(null);
   const [warRoomDismissed, setWarRoomDismissed] = useState(false);
-
-  const agentReviews = useMemo<AgentReview[]>(
-    () => messages.filter((m): m is { id: string; type: "agent"; review: AgentReview } => m.type === "agent").map((m) => m.review),
-    [messages],
-  );
+  const {
+    agentReviews,
+    completedResultsUrl,
+    phase,
+    error: streamError,
+    isAnalyzing,
+    reset: resetSwarmStream,
+    startAnalysis,
+  } = useSwarmStream();
+  const error = appError ?? streamError;
 
   useEffect(() => {
     const url = new URL("/api/catalog", window.location.origin);
@@ -103,7 +95,7 @@ export function CreativeSwarmApp() {
     fetch(url)
       .then((response) => response.json())
       .then((data) => setCatalog(data))
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load catalog."));
+      .catch((err) => setAppError(err instanceof Error ? err.message : "Failed to load catalog."));
   }, [campaignFilter]);
 
   const selectedCampaign = useMemo(
@@ -147,7 +139,7 @@ export function CreativeSwarmApp() {
     async (files: File[]) => {
       if (!files.length) return;
       setIsUploading(true);
-      setError(null);
+      setAppError(null);
 
       try {
         for (const file of files.slice(0, Math.max(0, 6 - selectedCreatives.length))) {
@@ -166,7 +158,7 @@ export function CreativeSwarmApp() {
           setUploadedCreatives((current) => [...current, payload.creative]);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed.");
+        setAppError(err instanceof Error ? err.message : "Upload failed.");
       } finally {
         setIsUploading(false);
       }
@@ -202,112 +194,36 @@ export function CreativeSwarmApp() {
     setCampaignFilter(value);
     setSelectedIds([]);
     setSelectedDatasetCreatives([]);
-    setCompletedResultsUrl(null);
-    setMessages([]);
+    resetSwarmStream();
+    setWarRoomDismissed(false);
+    setAppError(null);
   };
 
-  const analyze = async () => {
-    setError(null);
-    setCompletedResultsUrl(null);
-    setMessages([]);
-    setWarRoomDismissed(false);
-    setIsAnalyzing(true);
-    let resultsWindow = openWaitingResultsWindow();
-
-    try {
-      const createResponse = await fetch("/api/experiments", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          brief,
-          analysisInputMode,
-          projectedViews,
-          creativeIds: selectedIds,
-          uploadedCreatives,
-        }),
-      });
-      const createPayload = await createResponse.json();
-      if (!createResponse.ok) {
-        throw new Error(createPayload.error ?? "Could not create experiment.");
-      }
-
-      const experimentId = createPayload.experiment.id;
-      writeResultsWindowStatus(
-        resultsWindow,
-        "Gemini swarm is analyzing",
-        "Keep this tab open. Results will load here when the swarm completes.",
-      );
-
-      const analyzeResponse = await fetch(`/api/experiments/${createPayload.experiment.id}/analyze`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ experiment: createPayload.experiment }),
-      });
-
-      if (!analyzeResponse.ok) {
-        const payload = await analyzeResponse.json().catch(() => null);
-        throw new Error(payload?.error ?? "Analysis request failed.");
-      }
-
-      if (!analyzeResponse.body) {
-        throw new Error("Analysis stream did not start.");
-      }
-
-      const reader = analyzeResponse.body.getReader();
-      const decoder = new TextDecoder();
-      let buffered = "";
-      let reportReceived = false;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffered += decoder.decode(value, { stream: true });
-        const lines = buffered.split("\n");
-        buffered = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const event = JSON.parse(line);
-          if (event.type === "report") {
-            reportReceived = true;
-          } else if (event.type === "error") {
-            setError(event.message);
-            setMessages((current) => [...current, { id: crypto.randomUUID(), type: "error", message: event.message }]);
-          } else {
-            setMessages((current) => [...current, { id: crypto.randomUUID(), ...event }]);
-          }
-        }
-      }
-
-      if (!reportReceived) {
-        throw new Error("Analysis finished without a results report.");
-      }
-
-      const resultsUrl = `/experiments/${experimentId}/results`;
-      setCompletedResultsUrl(resultsUrl);
-
-      if (resultsWindow && !resultsWindow.closed) {
-        resultsWindow.location.href = resultsUrl;
-      } else {
-        resultsWindow = window.open(resultsUrl, "_blank", "noopener,noreferrer");
-        if (!resultsWindow) {
-          window.location.href = resultsUrl;
-        }
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Analysis failed.";
-      setError(message);
-      writeResultsWindowStatus(resultsWindow, "Analysis failed", message);
-    } finally {
-      setIsAnalyzing(false);
+  const removeCreative = useCallback((creative: CreativeDoc) => {
+    if (creative.source === "dataset") {
+      setSelectedIds((current) => current.filter((id) => id !== creative.id));
+      setSelectedDatasetCreatives((current) => current.filter((item) => item.id !== creative.id));
+    } else {
+      setUploadedCreatives((current) => current.filter((item) => item.id !== creative.id));
     }
+  }, []);
+
+  const analyze = () => {
+    setAppError(null);
+    setWarRoomDismissed(false);
+    void startAnalysis({
+      brief,
+      analysisInputMode,
+      projectedViews,
+      selectedIds,
+      uploadedCreatives,
+    });
   };
 
   const canAnalyze = Boolean(selectedCampaign) && selectedCreatives.length >= 2 && selectedCreatives.length <= 6 && projectedViews > 0 && !isAnalyzing;
 
   return (
-    <main className="min-h-screen bg-pp-bg text-pp-white">
+    <main className="min-h-screen bg-pp-bg pb-28 text-pp-white">
       <div className="mx-auto flex max-w-[1520px] flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
         <header className="flex flex-col gap-3 border-b border-[var(--pp-border)] pb-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -355,19 +271,8 @@ export function CreativeSwarmApp() {
           </div>
         ) : null}
 
-        <section className="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <section className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="flex flex-col gap-4">
-            <SelectedPanel
-              creatives={selectedCreatives}
-              onRemove={(creative) => {
-                if (creative.source === "dataset") {
-                  setSelectedIds((current) => current.filter((id) => id !== creative.id));
-                  setSelectedDatasetCreatives((current) => current.filter((item) => item.id !== creative.id));
-                } else {
-                  setUploadedCreatives((current) => current.filter((item) => item.id !== creative.id));
-                }
-              }}
-            />
             <UploadPanel dropzone={dropzone} isUploading={isUploading} disabled={!selectedCampaign || selectedCreatives.length >= 6} />
             <SwarmPersonalitiesPanel agents={swarmAgents} />
           </aside>
@@ -386,14 +291,13 @@ export function CreativeSwarmApp() {
               previewCreative={setPreviewCreative}
             />
             <CreativePreviewModal creative={previewCreative} onClose={() => setPreviewCreative(null)} />
-            <SwarmRoom messages={messages} creatives={selectedCreatives} isAnalyzing={isAnalyzing} />
             <AnalysisRedirectPanel resultsUrl={completedResultsUrl} isAnalyzing={isAnalyzing} />
           </div>
         </section>
       </div>
 
       <AnimatePresence>
-        {isAnalyzing && !warRoomDismissed && !error && selectedCreatives.length > 0 ? (
+        {phase === "analyzing" && !warRoomDismissed && !error && selectedCreatives.length > 0 ? (
           <WarRoomOverlay
             key="war-room"
             reviews={agentReviews}
@@ -403,6 +307,14 @@ export function CreativeSwarmApp() {
           />
         ) : null}
       </AnimatePresence>
+
+      <StickyActionBar
+        creatives={selectedCreatives}
+        canAnalyze={canAnalyze}
+        isAnalyzing={isAnalyzing}
+        onAnalyze={analyze}
+        onRemove={removeCreative}
+      />
     </main>
   );
 }
@@ -500,44 +412,78 @@ function campaignContextSummary(campaign: CampaignOption) {
   ];
 }
 
-function SelectedPanel({ creatives, onRemove }: { creatives: CreativeDoc[]; onRemove: (creative: CreativeDoc) => void }) {
+function StickyActionBar({
+  creatives,
+  canAnalyze,
+  isAnalyzing,
+  onAnalyze,
+  onRemove,
+}: {
+  creatives: CreativeDoc[];
+  canAnalyze: boolean;
+  isAnalyzing: boolean;
+  onAnalyze: () => void;
+  onRemove: (creative: CreativeDoc) => void;
+}) {
   return (
-    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Check className="size-4 text-pp-violet" />
-          <h2 className="text-sm font-semibold text-pp-white">Variants</h2>
-        </div>
-        <span className="text-xs font-medium text-pp-muted">{creatives.length}/6</span>
-      </div>
-      <div className="grid gap-2">
-        {creatives.length ? (
-          creatives.map((creative, index) => (
-            <div key={creative.id} className="flex items-center gap-3 rounded-[10px] border border-[var(--pp-border)] bg-pp-elevated p-2">
-              <Image
-                src={creative.thumbnailUrl ?? creative.assetUrl}
-                alt=""
-                width={40}
-                height={56}
-                className="h-14 w-10 shrink-0 rounded-[6px] object-cover"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-pp-white">Variant {index + 1}</p>
-                <p className="truncate text-xs text-pp-muted">{creative.features.headline || creative.label || creative.appName}</p>
+    <section className="fixed inset-x-0 bottom-0 z-40 border-t border-pp-purple/20 bg-pp-bg/92 px-4 py-3 text-pp-white shadow-[0_-18px_60px_rgba(0,0,0,0.36)] backdrop-blur-xl sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-[1520px] flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid size-11 place-items-center rounded-[10px] border border-pp-lavender/20 bg-pp-elevated">
+            <Check className="size-4 text-pp-violet" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-pp-white">Selected variants</p>
+            <p className="text-xs text-pp-muted">
+              {creatives.length}/6 ready - choose at least 2 creatives for a swarm run
+            </p>
+          </div>
+          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-1">
+            {creatives.length ? (
+              creatives.map((creative, index) => (
+                <div
+                  key={creative.id}
+                  className="group relative h-14 w-10 shrink-0 overflow-hidden rounded-[7px] border border-pp-lavender/20 bg-pp-elevated"
+                  title={`Variant ${index + 1}`}
+                >
+                  <Image
+                    src={creative.thumbnailUrl ?? creative.assetUrl}
+                    alt=""
+                    width={40}
+                    height={56}
+                    className="h-full w-full object-cover"
+                  />
+                  <span className="absolute left-1 top-1 rounded bg-pp-bg/80 px-1 text-[10px] font-semibold text-pp-white">
+                    {index + 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(creative)}
+                    className="absolute right-0.5 top-0.5 grid size-5 place-items-center rounded-full bg-pp-bg/85 text-pp-muted opacity-0 transition hover:text-pp-white group-hover:opacity-100 group-focus-within:opacity-100"
+                    aria-label={`Remove variant ${index + 1}`}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="flex h-14 min-w-[220px] items-center rounded-[10px] border border-dashed border-[var(--pp-border)] px-3 text-sm text-pp-muted">
+                Select 2-6 creatives from the library.
               </div>
-              <button
-                type="button"
-                onClick={() => onRemove(creative)}
-                className="inline-flex size-8 items-center justify-center rounded-[8px] text-pp-muted transition hover:bg-pp-elevated hover:text-pp-white"
-                aria-label="Remove variant"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          ))
-        ) : (
-          <div className="rounded-[10px] border border-dashed border-[var(--pp-border)] p-3 text-sm text-pp-muted">Select 2-6 creatives.</div>
-        )}
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onAnalyze}
+          disabled={!canAnalyze}
+          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-[10px] border border-pp-lavender/25 bg-gradient-to-br from-pp-purple to-pp-violet px-5 text-sm font-medium text-pp-white shadow-glow transition hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          {isAnalyzing ? <Loader2 className="size-4 animate-spin" /> : <Bot className="size-4" />}
+          Run Gemini swarm
+          <ChevronRight className="size-4" />
+        </button>
       </div>
     </section>
   );
@@ -741,7 +687,7 @@ function CreativeLibrary({
               <article
                 key={creative.id}
                 className={cn(
-                  "grid grid-cols-[74px_minmax(0,1fr)] gap-3 rounded-[10px] border p-2 text-left transition hover:-translate-y-0.5",
+                  "grid grid-cols-[86px_minmax(0,1fr)] gap-3 rounded-[10px] border p-2 text-left transition hover:-translate-y-0.5",
                   selected
                     ? "border-pp-purple bg-pp-purple/10"
                     : "border-[var(--pp-border)] hover:border-[var(--pp-border-strong)] hover:bg-pp-elevated",
@@ -750,16 +696,16 @@ function CreativeLibrary({
                 <button
                   type="button"
                   onClick={() => previewCreative(creative)}
-                  className="group relative h-28 w-[74px] overflow-hidden rounded-[6px] bg-pp-elevated text-left"
+                  className="group relative h-32 w-[86px] overflow-hidden rounded-[6px] bg-pp-elevated text-left"
                   aria-label={`Preview ${creative.appName ?? "creative"}`}
                 >
                   <Image
                     src={creative.thumbnailUrl ?? creative.assetUrl}
                     alt=""
-                    width={74}
-                    height={112}
+                    width={86}
+                    height={128}
                     loading={index < 6 ? "eager" : "lazy"}
-                    className="h-28 w-[74px] object-cover transition group-hover:scale-105"
+                    className="h-32 w-[86px] object-cover transition group-hover:scale-105"
                   />
                   <span className="absolute inset-x-1 bottom-1 inline-flex h-7 items-center justify-center rounded-[6px] bg-pp-bg/80 text-pp-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
                     <Maximize2 className="size-3.5" />
@@ -783,18 +729,10 @@ function CreativeLibrary({
                       {selected ? "Selected" : "Select"}
                     </button>
                   </div>
-                  <p className="mt-1 line-clamp-2 text-xs text-pp-secondary">{creative.features.headline}</p>
-                  <p className="mt-1 truncate text-[11px] text-pp-muted">{creative.campaignId}</p>
-                  <div className="mt-2 flex flex-wrap gap-1">
+                  <p className="mt-1 line-clamp-2 text-xs text-pp-secondary">{creative.features.headline || creative.label || creative.campaignId}</p>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
                     <Badge>{creative.format}</Badge>
-                    <Badge>{creative.features.ctaText || "no CTA"}</Badge>
-                    <Badge>{creative.metricsSummary?.creativeStatus ?? "unknown"}</Badge>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-pp-muted">
-                    <span>CTR {formatPct(creative.metricsSummary?.ctr, 2)}</span>
-                    <span>CVR {formatPct(creative.metricsSummary?.cvr, 1)}</span>
-                    <span>Clutter {metric(creative.features.visualClutter)}</span>
-                    <span>Novelty {metric(creative.features.noveltyScore)}</span>
+                    <Badge>{creative.metricsSummary?.creativeStatus ?? creative.source}</Badge>
                   </div>
                 </div>
               </article>
@@ -892,174 +830,6 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SwarmRoom({ messages, creatives, isAnalyzing }: { messages: SwarmMessage[]; creatives: CreativeDoc[]; isAnalyzing: boolean }) {
-  const visible = messages.slice(-18);
-  return (
-    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-elevated p-4 shadow-panel">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Bot className="size-4 text-pp-lavender" />
-          <h2 className="text-sm font-semibold text-pp-white">Swarm Room</h2>
-        </div>
-        {isAnalyzing ? <Loader2 className="size-4 animate-spin text-pp-violet" /> : null}
-      </div>
-      <div className="grid max-h-[440px] gap-3 overflow-auto pr-1 xl:grid-cols-2">
-        <AnimatePresence initial={false}>
-          {visible.length ? (
-            visible.map((message) => {
-              if (message.type === "agent") {
-                return <AgentSwarmCard key={message.id} review={message.review} creatives={creatives} />;
-              }
-
-              if (message.type === "evidence") {
-                return <EvidenceSwarmCard key={message.id} pack={message.pack} creatives={creatives} />;
-              }
-
-              if (message.type === "decay") {
-                return <DecaySwarmCard key={message.id} curves={message.curves} />;
-              }
-
-              return (
-                <motion.div
-                  key={message.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  className={cn(
-                    "rounded-[10px] border p-3",
-                    message.type === "error" ? "border-pp-error/30 bg-pp-error/10 text-pp-error" : "border-[var(--pp-border)] bg-pp-panel/80 text-pp-secondary",
-                  )}
-                >
-                  <p className="text-sm">{message.message}</p>
-                </motion.div>
-              );
-            })
-          ) : (
-            <div className="rounded-[10px] border border-[var(--pp-border)] bg-pp-panel/80 p-3 text-sm text-pp-secondary">Awaiting analysis.</div>
-          )}
-        </AnimatePresence>
-      </div>
-    </section>
-  );
-}
-
-function AgentSwarmCard({ review, creatives }: { review: AgentReview; creatives: CreativeDoc[] }) {
-  const isPersona = review.agentType === "persona";
-  const variantLabel = labelFor(review.variantId, creatives);
-  const iconSrc = isPersona ? personaIconFor(review.agentName) : null;
-
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      className={cn(
-        "rounded-[12px] border p-3",
-        isPersona ? "border-pp-violet/30 bg-pp-purple/10" : "border-[var(--pp-border)] bg-pp-panel/80",
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "inline-flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border",
-            isPersona ? "border-pp-violet/30 bg-pp-bg" : "border-[var(--pp-border-strong)] bg-pp-elevated text-pp-lavender",
-          )}
-        >
-          {iconSrc ? (
-            <Image src={iconSrc} alt="" width={44} height={44} className="size-11 object-cover" />
-          ) : (
-            <MessageSquareText className="size-5" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-[6px] bg-pp-bg px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-violet">
-              {variantLabel}
-            </span>
-            <span className="rounded-[6px] bg-pp-elevated px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">
-              {isPersona ? "Persona" : "Specialist"}
-            </span>
-            <BehaviorBadge state={review.behavior.primaryState} />
-          </div>
-          <h3 className="mt-2 truncate text-sm font-semibold text-pp-white">{review.agentName}</h3>
-        </div>
-      </div>
-
-      <div className="mt-3 grid gap-2">
-        <SwarmCardSection label="Observation" value={review.reasoning} strong />
-        <SwarmCardSection label="Behavior" value={review.behavior.rationale} />
-        <div className="grid gap-2 rounded-[8px] bg-pp-elevated px-3 py-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">Action Mix</span>
-          <span className="text-xs text-pp-secondary">{behaviorMix(review.behavior.probabilities)}</span>
-        </div>
-        <SwarmCardSection label="Suggested Edit" value={review.suggestedEdit} />
-      </div>
-    </motion.article>
-  );
-}
-
-function EvidenceSwarmCard({ pack, creatives }: { pack: EvidencePack; creatives: CreativeDoc[] }) {
-  const variantLabel = labelFor(pack.variantId, creatives);
-
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      className="rounded-[12px] border border-pp-info/25 bg-pp-info/10 p-3"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-2 rounded-[6px] bg-pp-bg px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-info">
-          <BarChart3 className="size-3.5" />
-          {variantLabel}
-        </span>
-        <span className="rounded-[6px] bg-pp-elevated px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">Evidence</span>
-      </div>
-      <h3 className="mt-2 text-sm font-semibold text-pp-white">{pack.variantLabel}</h3>
-      <p className="mt-2 text-sm text-pp-secondary">{pack.facts[1] ?? pack.facts[0] ?? "Evidence pack prepared."}</p>
-      <p className="mt-2 text-xs text-pp-muted">{pack.benchmark.contextLabel}</p>
-    </motion.article>
-  );
-}
-
-function DecaySwarmCard({ curves }: { curves: SimulatedDecayCurve[] }) {
-  const earliestDay = curves.length ? Math.min(...curves.map((curve) => curve.fatiguePredictionDay)) : null;
-
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      className="rounded-[12px] border border-pp-violet/25 bg-pp-purple/10 p-3"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-2 rounded-[6px] bg-pp-bg px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-violet">
-          <FlaskConical className="size-3.5" />
-          Fatigue Simulation
-        </span>
-        <span className="rounded-[6px] bg-pp-elevated px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">
-          14 days
-        </span>
-      </div>
-      <p className="mt-2 text-sm text-pp-white">
-        {curves.length} variant{curves.length === 1 ? "" : "s"} projected with CTR decay bands.
-      </p>
-      <p className="mt-2 text-xs text-pp-muted">
-        Earliest predicted 30% CTR drop: {earliestDay ? `day ${earliestDay}` : "n/a"}.
-      </p>
-    </motion.article>
-  );
-}
-
-function SwarmCardSection({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="grid gap-1 rounded-[8px] bg-pp-elevated px-3 py-2">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pp-muted">{label}</span>
-      <span className={cn("text-sm", strong ? "text-pp-white" : "text-pp-secondary")}>{value}</span>
-    </div>
-  );
-}
-
 function AnalysisRedirectPanel({ resultsUrl, isAnalyzing }: { resultsUrl: string | null; isAnalyzing: boolean }) {
   return (
     <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
@@ -1082,7 +852,7 @@ function AnalysisRedirectPanel({ resultsUrl, isAnalyzing }: { resultsUrl: string
       </div>
       <p className="mt-3 text-sm text-pp-secondary">
         {isAnalyzing
-          ? "The swarm room stays here while Gemini runs. The separate results tab will load after the final report is saved."
+          ? "The War Room stays live while Gemini runs. The separate results tab will load after the final report is saved."
           : resultsUrl
             ? "The completed report is available on its own page."
             : "Select 2-6 variants and run the Gemini swarm to open a separate results page."}
@@ -1091,79 +861,12 @@ function AnalysisRedirectPanel({ resultsUrl, isAnalyzing }: { resultsUrl: string
   );
 }
 
-function openWaitingResultsWindow() {
-  const popup = window.open("about:blank", "_blank");
-  writeResultsWindowStatus(
-    popup,
-    "Preparing Gemini swarm",
-    "The results page will appear here when analysis completes.",
-  );
-  return popup;
-}
-
-function writeResultsWindowStatus(target: Window | null, title: string, message: string) {
-  if (!target || target.closed) return;
-
-  try {
-    target.document.title = title;
-    target.document.body.innerHTML = `
-      <main style="min-height:100vh;margin:0;display:grid;place-items:center;background:#070912;color:#f6f6fb;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-        <section style="width:min(520px,calc(100vw - 48px));border:1px solid rgba(199,183,255,.16);border-radius:16px;background:#111626;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.32);">
-          <p style="margin:0 0 8px;color:#9d64f6;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;">Creative Swarm Copilot</p>
-          <h1 style="margin:0;color:#f6f6fb;font-size:22px;line-height:1.25;">${escapeHtml(title)}</h1>
-          <p style="margin:12px 0 0;color:#c9c3dd;font-size:14px;line-height:1.6;">${escapeHtml(message)}</p>
-        </section>
-      </main>
-    `;
-  } catch {
-    // Some browsers restrict writes to newly opened windows; navigation fallback still works.
-  }
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
 function Badge({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex min-h-6 items-center rounded-[6px] bg-pp-purple/15 px-2 py-1 text-xs font-medium text-pp-lavender">
       {children}
     </span>
   );
-}
-
-function BehaviorBadge({ state }: { state: string }) {
-  return (
-    <span className="inline-flex min-h-6 items-center rounded-[6px] bg-pp-info/10 px-2 py-1 text-xs font-medium text-pp-info">
-      {humanizeBehavior(state)}
-    </span>
-  );
-}
-
-function behaviorMix(probabilities: {
-  skip: number;
-  ignore: number;
-  inspect: number;
-  click: number;
-  convert: number;
-  exit: number;
-}) {
-  return [
-    `Click ${formatBehaviorPct(probabilities.click)}`,
-    `Convert ${formatBehaviorPct(probabilities.convert)}`,
-    `Skip ${formatBehaviorPct(probabilities.skip)}`,
-    `Exit ${formatBehaviorPct(probabilities.exit)}`,
-  ].join(" | ");
-}
-
-function metric(value?: number | null) {
-  if (value === undefined || value === null) return "n/a";
-  return formatNumber(value, 2);
 }
 
 function campaignLabel(campaign: CampaignOption) {
@@ -1181,32 +884,4 @@ function personaIconFor(agentName: string) {
   };
 
   return icons[agentName] ?? "/icons/Artboard%207.png";
-}
-
-function labelFor(variantId: string, creatives: CreativeDoc[]) {
-  const index = creatives.findIndex((creative) => creative.id === variantId);
-  return index >= 0 ? `Variant ${index + 1}` : variantId;
-}
-
-function humanizeBehavior(value: string) {
-  switch (value) {
-    case "skip":
-      return "Skip";
-    case "ignore":
-      return "Ignore";
-    case "inspect":
-      return "Inspect";
-    case "click":
-      return "Click";
-    case "convert":
-      return "Convert";
-    case "exit":
-      return "Exit";
-    default:
-      return value;
-  }
-}
-
-function formatBehaviorPct(value: number) {
-  return `${(value * 100).toFixed(2)}%`;
 }

@@ -19,10 +19,10 @@ export type AgentVisualState = "dim" | "thinking" | "speaking" | "done";
 
 export type AgentVisual = {
   name: string;
-  short: string; // 1–2 word label that fits inside the avatar
+  short: string; // 1-2 word label that fits inside the avatar
   type: "specialist" | "persona";
   icon: LucideIcon;
-  hue: number; // 0–360 — drives the lit-state glow
+  hue: number; // 0-360, drives the lit-state glow
 };
 
 const SPECIALISTS: AgentVisual[] = [
@@ -62,7 +62,7 @@ export function visualForAgent(name: string): AgentVisual {
   );
 }
 
-// Even radial spacing — each agent sits on its own slot regardless of order of arrival.
+// Even radial spacing. Each agent sits on its own slot regardless of order of arrival.
 // Specialists outer ring, Personas inner ring.
 export function ringPosition(
   agent: AgentVisual,

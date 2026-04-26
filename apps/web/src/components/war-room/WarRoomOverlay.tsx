@@ -20,7 +20,7 @@ export function WarRoomOverlay({
   totalAgentsExpected: number;
   onSkip: () => void;
 }) {
-  const { current, agentStatesByVariant, currentVariantId, totalSeen } = useEventPresenter(reviews);
+  const { current, agentStatesByVariant, currentVariantId, queueDepth, totalSeen } = useEventPresenter(reviews);
 
   const currentVariant = currentVariantId
     ? variants.find((v) => v.id === currentVariantId) ?? null
@@ -49,7 +49,7 @@ export function WarRoomOverlay({
         <div className="flex items-center gap-3">
           <span className="size-2 animate-pulse rounded-full bg-pp-violet shadow-[0_0_12px_rgba(123,63,242,0.8)]" />
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-pp-lavender">
-            Swarm War Room · live analysis
+            Swarm War Room - live analysis
           </p>
         </div>
 
@@ -61,13 +61,20 @@ export function WarRoomOverlay({
             </span>
             {currentVariantIndex >= 0 && (
               <>
-                <span className="text-pp-muted">·</span>
+                <span className="text-pp-muted">-</span>
                 <span className="text-pp-muted">Variant</span>
                 <span className="font-mono text-pp-white">
                   {currentVariantIndex + 1}/{variants.length}
                 </span>
               </>
             )}
+            {queueDepth > 0 ? (
+              <>
+                <span className="text-pp-muted">-</span>
+                <span className="text-pp-muted">Queued</span>
+                <span className="font-mono text-pp-white">{queueDepth}</span>
+              </>
+            ) : null}
           </div>
           <button
             type="button"
@@ -91,16 +98,16 @@ export function WarRoomOverlay({
       </div>
 
       <main className="relative flex flex-1 items-center justify-center overflow-hidden px-4 py-6">
-        <div className="relative flex w-full max-w-5xl flex-col items-center gap-6">
-          <div className="relative">
+        <div className="relative grid w-full max-w-6xl gap-6">
+          <div className="grid items-center gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <VariantStage
+              variant={currentVariant}
+              variantIndex={currentVariantIndex}
+              variantCount={variants.length}
+            />
             <AgentRing states={states} speakingName={current?.review.agentName ?? null} />
-            {/* Center stage: the creative under analysis */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <VariantStage variant={currentVariant} />
-            </div>
           </div>
 
-          {/* Reasoning panel */}
           <AnimatePresence mode="wait">
             <motion.div
               key={current ? `${current.review.variantId}::${current.review.agentName}` : "idle"}
@@ -156,11 +163,23 @@ export function WarRoomOverlay({
   );
 }
 
-function VariantStage({ variant }: { variant: CreativeDoc | null }) {
+function VariantStage({
+  variant,
+  variantIndex,
+  variantCount,
+}: {
+  variant: CreativeDoc | null;
+  variantIndex: number;
+  variantCount: number;
+}) {
+  const variantLabel = variantIndex >= 0 ? `Variant ${variantIndex + 1}/${variantCount}` : "Variant";
+
   if (!variant) {
     return (
-      <div className="flex size-32 items-center justify-center rounded-2xl border border-pp-purple/20 bg-pp-elevated/60 text-xs text-pp-muted">
-        Loading variant…
+      <div className="mx-auto grid w-40 gap-3">
+        <div className="flex aspect-[9/13] items-center justify-center rounded-[14px] border border-pp-purple/20 bg-pp-elevated/60 text-xs text-pp-muted">
+          Loading variant...
+        </div>
       </div>
     );
   }
@@ -171,19 +190,20 @@ function VariantStage({ variant }: { variant: CreativeDoc | null }) {
       initial={{ scale: 0.9, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ duration: 0.35 }}
-      className="relative size-36 overflow-hidden rounded-2xl border-2 border-pp-purple/40 bg-pp-elevated shadow-[0_0_40px_rgba(123,63,242,0.4)]"
+      className="mx-auto grid w-40 gap-3 lg:w-44"
     >
-      <Image
-        src={variant.thumbnailUrl ?? variant.assetUrl}
-        alt={variant.appName ?? variant.id}
-        fill
-        sizes="144px"
-        className="object-cover"
-      />
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[rgba(7,9,18,0.9)] to-transparent px-2 py-1.5">
-        <p className="truncate text-[11px] font-semibold text-pp-white">
-          {variant.appName ?? variant.label ?? variant.id}
-        </p>
+      <div className="relative aspect-[9/13] overflow-hidden rounded-[14px] border-2 border-pp-purple/40 bg-pp-elevated shadow-[0_0_40px_rgba(123,63,242,0.4)]">
+        <Image
+          src={variant.thumbnailUrl ?? variant.assetUrl}
+          alt={variant.appName ?? variant.id}
+          fill
+          sizes="176px"
+          className="object-contain"
+        />
+      </div>
+      <div className="min-w-0 text-center">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-pp-lavender">{variantLabel}</p>
+        <p className="mt-1 truncate text-sm font-semibold text-pp-white">{variant.appName ?? variant.label ?? variant.id}</p>
       </div>
     </motion.div>
   );

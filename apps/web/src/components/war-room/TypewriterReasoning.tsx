@@ -8,7 +8,6 @@ export function TypewriterReasoning({ text, signature }: { text: string; signatu
   const [displayed, setDisplayed] = useState("");
 
   useEffect(() => {
-    setDisplayed("");
     if (!text) return;
     const intervalMs = 1000 / CHARS_PER_SECOND;
     let i = 0;
@@ -22,7 +21,7 @@ export function TypewriterReasoning({ text, signature }: { text: string; signatu
       }
     }, intervalMs);
     return () => clearInterval(id);
-    // signature changes whenever the source review changes — drives reset
+    // signature changes whenever the source review changes and drives reset
   }, [text, signature]);
 
   return (

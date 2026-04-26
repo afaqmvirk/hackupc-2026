@@ -12,7 +12,6 @@ import {
   Eye,
   FlaskConical,
   Gauge,
-  LayoutDashboard,
   MessageSquareText,
   MousePointerClick,
   ShieldAlert,
@@ -21,6 +20,7 @@ import {
   Trophy,
   Users,
 } from "lucide-react";
+import { RevealStage } from "@/components/war-room/RevealStage";
 import {
   type AgentReview,
   type AnalysisInputMode,
@@ -44,7 +44,7 @@ type ResultsDashboardProps = {
   agentReviews?: AgentReview[];
 };
 
-type TabId = "overview" | "compare" | "personas" | "fatigue";
+type TabId = "compare" | "personas" | "fatigue";
 
 type ScoreSet = {
   attention: number | null;
@@ -66,7 +66,6 @@ type VariantView = {
 };
 
 const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
-  { id: "overview", label: "Overview", icon: <LayoutDashboard className="size-4" /> },
   { id: "compare", label: "Compare", icon: <BarChart3 className="size-4" /> },
   { id: "personas", label: "Personas", icon: <Users className="size-4" /> },
   { id: "fatigue", label: "Fatigue", icon: <Activity className="size-4" /> },
@@ -129,7 +128,7 @@ export function ResultsDashboard({
   analysisInputMode,
   agentReviews = [],
 }: ResultsDashboardProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("compare");
   const views = useMemo(() => (report ? buildVariantViews(report, creatives, agentReviews) : []), [agentReviews, creatives, report]);
 
   if (!report) {
@@ -150,11 +149,21 @@ export function ResultsDashboard({
 
   return (
     <section className="grid gap-5">
-      <OverviewHero report={report} views={views} champion={champion} />
-      <ActionDecisionStrip champion={champion} />
+      <RevealStage order={0}>
+        <OverviewHero report={report} views={views} champion={champion} />
+      </RevealStage>
+      <RevealStage order={1}>
+        <OverviewTab report={report} views={views} />
+      </RevealStage>
+      <RevealStage order={2}>
+        <AbTestPlanPanel report={report} views={views} />
+      </RevealStage>
+      <RevealStage order={3}>
+        <ActionDecisionStrip champion={champion} />
+      </RevealStage>
 
       <nav className="sticky top-0 z-10 -mx-4 border-y border-[var(--pp-border)] bg-pp-bg/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-[16px] sm:border">
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <div className="grid grid-cols-3 gap-2">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -174,7 +183,6 @@ export function ResultsDashboard({
         </div>
       </nav>
 
-      {activeTab === "overview" ? <OverviewTab report={report} views={views} /> : null}
       {activeTab === "compare" ? <CompareTab views={views} /> : null}
       {activeTab === "personas" ? <PersonasTab views={views} agentReviews={agentReviews} /> : null}
       {activeTab === "fatigue" ? <FatigueTab views={views} analysisInputMode={analysisInputMode} /> : null}
@@ -265,6 +273,47 @@ function ActionDecisionStrip({ champion }: { champion?: VariantView }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function AbTestPlanPanel({ report, views }: { report: FinalReport; views: VariantView[] }) {
+  const plan = report.abTestPlan;
+
+  return (
+    <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <SectionHeader icon={<FlaskConical className="size-4" />} title="A/B test plan" />
+          <p className="mt-2 max-w-3xl text-sm text-pp-muted">
+            Pre-test simulation based on historical creative performance, visual similarity, and persona-agent evaluation.
+          </p>
+        </div>
+        <Pill className="border-pp-violet/35 bg-pp-purple/15 text-pp-lavender">{plan.trafficSplit}</Pill>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-4">
+        <MetricTile icon={<Target className="size-4" />} label="Primary" value={plan.primaryMetric} />
+        <MetricTile icon={<MousePointerClick className="size-4" />} label="Secondary" value={plan.secondaryMetric} />
+        <MetricTile icon={<Trophy className="size-4" />} label="Control" value={planVariantLabel(plan.control, views)} />
+        <MetricTile icon={<FlaskConical className="size-4" />} label="Challenger" value={planVariantLabel(plan.challenger, views)} />
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <PlanCopyBlock title="Hypothesis" value={plan.hypothesis} />
+        <PlanCopyBlock title="Stop condition" value={plan.stopCondition} />
+        <PlanCopyBlock title="Action if winner" value={plan.actionIfWinner} />
+        <PlanCopyBlock title="Action if loser" value={plan.actionIfLoser} />
+      </div>
+    </section>
+  );
+}
+
+function PlanCopyBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-[10px] border border-[var(--pp-border)] bg-pp-elevated px-3 py-2">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-pp-muted">{title}</p>
+      <p className="mt-2 text-sm text-pp-secondary">{value}</p>
+    </div>
   );
 }
 
@@ -1181,6 +1230,11 @@ function fatigueLabel(view?: VariantView) {
 function labelFor(variantId: string, creatives: CreativeDoc[]) {
   const index = creatives.findIndex((creative) => creative.id === variantId);
   return index >= 0 ? `Variant ${index + 1}` : variantId;
+}
+
+function planVariantLabel(value: string, views: VariantView[]) {
+  const match = views.find((view) => view.id === value || view.label === value || view.creative?.id === value);
+  return match?.label ?? value;
 }
 
 function humanizeBehavior(value: string) {
