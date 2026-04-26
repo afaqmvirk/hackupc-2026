@@ -23,7 +23,13 @@ export const agentReviewJsonSchema = {
     attention: { type: "number", minimum: 0, maximum: 10 },
     clarity: { type: "number", minimum: 0, maximum: 10 },
     trust: { type: "number", minimum: 0, maximum: 10 },
-    conversionIntent: { type: "number", minimum: 0, maximum: 10 },
+    conversionIntent: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description:
+        "Score from 0.0 to 1.0 representing the direct-response conversion intent. Is there a clear Call To Action (CTA)? Is a product visible? 0.0 means no intent (e.g. a plain picture of a sky), 1.0 means heavy performance marketing intent.",
+    },
     fatigueRisk: { type: "string", enum: ["low", "medium", "high"] },
     recommendation: { type: "string", enum: ["scale", "test", "edit", "pivot", "pause"] },
     topPositive: { type: "string" },

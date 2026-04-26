@@ -51,10 +51,9 @@ export async function analyzeExperimentWithSwarm({
     await onEvent?.({ type: "evidence", pack: enrichedPack });
   }
 
-  await onEvent?.({ type: "decay", curves: decayCurves });
   onEvent?.({
     type: "status",
-    message: `Decay simulation complete. Earliest fatigue predicted on Day ${Math.min(...decayCurves.map((c) => c.fatiguePredictionDay))}.`,
+    message: `Decay simulation complete. Earliest raw fatigue predicted on Day ${Math.min(...decayCurves.map((c) => c.fatiguePredictionDay))}.`,
   });
 
   onEvent?.({ type: "status", message: "Gemini swarm agents are reviewing each variant." });
@@ -71,6 +70,27 @@ export async function analyzeExperimentWithSwarm({
       await onEvent?.({ type: "agent", review });
     }
   }
+
+  // Marketer Multiplier: scale the raw simulation by the Performance Marketer's
+  // conversionIntent (0.0–1.0). A blank sky (no CTA, no product) gets ~0.0 and
+  // collapses the projected attention curve to near-zero, defeating the "sky
+  // loophole" where qualitative-only agents would otherwise rate clarity highly.
+  // Defaults to 1.0 if the marketer review is missing for any reason.
+  const multipliedCurves: SimulatedDecayCurve[] = decayCurves.map((curve) => {
+    const marketerReview = reviews.find(
+      (r) => r.variantId === curve.variantId && r.agentName === "Performance Marketer",
+    );
+    const intent = marketerReview?.conversionIntent ?? 1.0;
+    return {
+      ...curve,
+      ctrCurve: curve.ctrCurve.map((v) => v * intent),
+      cvrCurve: curve.cvrCurve.map((v) => v * intent),
+      bandLow: curve.bandLow.map((v) => v * intent),
+      bandHigh: curve.bandHigh.map((v) => v * intent),
+    };
+  });
+
+  await onEvent?.({ type: "decay", curves: multipliedCurves });
 
   onEvent?.({ type: "status", message: "Aggregator is ranking variants and writing the A/B test plan." });
 
@@ -94,5 +114,5 @@ export async function analyzeExperimentWithSwarm({
 
   await onEvent?.({ type: "report", report });
 
-  return { evidencePacks, reviews, report, decayCurves };
+  return { evidencePacks, reviews, report, decayCurves: multipliedCurves };
 }

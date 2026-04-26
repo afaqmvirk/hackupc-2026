@@ -789,7 +789,13 @@ function FatigueGraph({ curves, creatives }: { curves: SimulatedDecayCurve[]; cr
               tick={{ fontSize: 11, fill: "#8e87a6" }}
               axisLine={false}
               tickLine={false}
-              width={52}
+              width={64}
+              label={{
+                value: "Audience Attention Index",
+                angle: -90,
+                position: "insideLeft",
+                style: { textAnchor: "middle", fill: "#c7b7ff", fontSize: 11 },
+              }}
             />
             <Tooltip
               formatter={(value, name) => [typeof value === "number" ? `${value.toFixed(3)}%` : String(value), String(name)]}
@@ -832,7 +838,7 @@ function FatigueGraph({ curves, creatives }: { curves: SimulatedDecayCurve[]; cr
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4, fill: color }}
-                  name={`${label} CTR`}
+                  name={`${label} Attention Index`}
                 />,
               ];
             })}
@@ -857,7 +863,7 @@ function FatigueGraph({ curves, creatives }: { curves: SimulatedDecayCurve[]; cr
       </div>
 
       <p className="mt-3 text-xs text-pp-muted">
-        Shaded band = p10–p90 Monte Carlo confidence interval (n=1,000). Dashed red line = predicted &gt;30% CTR drop threshold.
+        Shaded band = p10–p90 Monte Carlo confidence interval (n=1,000). Dashed red line = predicted &gt;30% attention drop threshold. Curve scaled by Performance Marketer&apos;s conversion-intent score.
       </p>
     </section>
   );

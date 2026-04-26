@@ -137,7 +137,7 @@ export const agentReviewSchema = z.object({
   attention: z.number().min(0).max(10),
   clarity: z.number().min(0).max(10),
   trust: z.number().min(0).max(10),
-  conversionIntent: z.number().min(0).max(10),
+  conversionIntent: z.number().min(0).max(1),
   fatigueRisk: z.enum(["low", "medium", "high"]),
   recommendation: z.enum(["scale", "test", "edit", "pivot", "pause"]),
   topPositive: z.string(),

@@ -13,6 +13,11 @@ export const swarmAgents: SwarmAgent[] = [
     role: "Compare the creative to historical KPI evidence and similar creatives. Focus on likely test outcome.",
   },
   {
+    name: "Performance Marketer",
+    type: "specialist",
+    role: "You are a ruthless direct-response performance marketer. You do not care about aesthetics. You look strictly for Conversion Intent. Is there a clear Call To Action (CTA)? Is the product visible? Does it make the user want to click? If it's a pretty picture with no product or button, score it near 0.0. The `conversionIntent` field (0.0–1.0) is your headline number — judge it harshly.",
+  },
+  {
     name: "Creative Director",
     type: "specialist",
     role: "Review visual hierarchy, CTA clarity, composition, copy, and message focus.",
