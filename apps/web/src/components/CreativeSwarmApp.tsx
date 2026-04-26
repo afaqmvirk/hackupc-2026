@@ -30,6 +30,7 @@ import {
   type SimulatedDecayCurve,
 } from "@/lib/schemas";
 import { swarmAgents, type SwarmAgent } from "@/lib/analysis/prompts";
+import { WarRoomOverlay } from "@/components/war-room/WarRoomOverlay";
 import { cn, formatNumber, formatPct } from "@/lib/utils";
 
 type Catalog = {
@@ -87,6 +88,12 @@ export function CreativeSwarmApp() {
   const [query, setQuery] = useState("");
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [previewCreative, setPreviewCreative] = useState<CreativeDoc | null>(null);
+  const [warRoomDismissed, setWarRoomDismissed] = useState(false);
+
+  const agentReviews = useMemo<AgentReview[]>(
+    () => messages.filter((m): m is { id: string; type: "agent"; review: AgentReview } => m.type === "agent").map((m) => m.review),
+    [messages],
+  );
 
   useEffect(() => {
     const url = new URL("/api/catalog", window.location.origin);
@@ -203,6 +210,7 @@ export function CreativeSwarmApp() {
     setError(null);
     setCompletedResultsUrl(null);
     setMessages([]);
+    setWarRoomDismissed(false);
     setIsAnalyzing(true);
     let resultsWindow = openWaitingResultsWindow();
 
@@ -383,6 +391,18 @@ export function CreativeSwarmApp() {
           </div>
         </section>
       </div>
+
+      <AnimatePresence>
+        {isAnalyzing && !warRoomDismissed && !error && selectedCreatives.length > 0 ? (
+          <WarRoomOverlay
+            key="war-room"
+            reviews={agentReviews}
+            variants={selectedCreatives}
+            totalAgentsExpected={swarmAgents.length * selectedCreatives.length}
+            onSkip={() => setWarRoomDismissed(true)}
+          />
+        ) : null}
+      </AnimatePresence>
     </main>
   );
 }
