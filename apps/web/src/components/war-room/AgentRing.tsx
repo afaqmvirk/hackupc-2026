@@ -28,11 +28,14 @@ export function AgentRing({
         aspectRatio: "1 / 1",
       }}
     >
-      {/* Faint orbital guides */}
-      <div className="pointer-events-none absolute inset-0 rounded-full border border-pp-purple/10" />
+      {/* Faint constellation guides */}
       <div
-        className="pointer-events-none absolute rounded-full border border-pp-purple/8"
-        style={{ inset: "19%" }}
+        className="pointer-events-none absolute rounded-[44%] border border-pp-purple/10"
+        style={{ inset: "1% 5% 4% 2%", transform: "rotate(-8deg)" }}
+      />
+      <div
+        className="pointer-events-none absolute rounded-[42%] border border-pp-purple/8"
+        style={{ inset: "22% 18% 17% 21%", transform: "rotate(13deg)" }}
       />
 
       {SPECIALIST_AGENTS.map((agent, i) => (

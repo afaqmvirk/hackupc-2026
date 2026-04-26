@@ -6,10 +6,8 @@ import {
   Flame,
   Gem,
   Globe,
-  Layers,
   ScanLine,
   ShieldAlert,
-  Sparkles,
   Target,
   Wand2,
   type LucideIcon,
@@ -39,8 +37,8 @@ const PERSONAS: AgentVisual[] = [
   { name: "Skeptical User", short: "Skeptic", type: "persona", icon: Eye, hue: 220 },
   { name: "Reward-Seeking User", short: "Reward", type: "persona", icon: Gem, hue: 158 },
   { name: "Practical Converter", short: "Practical", type: "persona", icon: Briefcase, hue: 24 },
-  { name: "Visual Trend Seeker", short: "Trend", type: "persona", icon: Sparkles, hue: 295 },
-  { name: "Category-Matched User", short: "Match", type: "persona", icon: Layers, hue: 178 },
+  { name: "Scam-Sensitive User", short: "Scam", type: "persona", icon: ShieldAlert, hue: 350 },
+  { name: "Privacy-Conscious User", short: "Privacy", type: "persona", icon: Eye, hue: 192 },
 ];
 
 export const ALL_AGENTS = [...SPECIALISTS, ...PERSONAS];
@@ -62,15 +60,55 @@ export function visualForAgent(name: string): AgentVisual {
   );
 }
 
-// Even radial spacing. Each agent sits on its own slot regardless of order of arrival.
-// Specialists outer ring, Personas inner ring.
+const ORGANIC_SLOTS: Record<AgentVisual["type"], Array<{ x: number; y: number }>> = {
+  specialist: [
+    { x: -0.08, y: -0.96 },
+    { x: 0.68, y: -0.7 },
+    { x: 0.96, y: -0.02 },
+    { x: 0.5, y: 0.84 },
+    { x: -0.4, y: 0.88 },
+    { x: -0.92, y: 0.2 },
+  ],
+  persona: [
+    { x: -0.5, y: -0.44 },
+    { x: 0.18, y: -0.58 },
+    { x: 0.62, y: -0.14 },
+    { x: 0.38, y: 0.5 },
+    { x: -0.18, y: 0.6 },
+    { x: -0.64, y: 0.1 },
+  ],
+};
+
+// Stable constellation slots. They look more organic than equal radial spacing
+// while staying deterministic, so avatars do not jump between renders.
 export function ringPosition(
   agent: AgentVisual,
   index: number,
   total: number,
 ): { x: number; y: number } {
-  const radius = agent.type === "specialist" ? 1.0 : 0.62; // unit-circle scale
-  const angleOffset = agent.type === "specialist" ? -Math.PI / 2 : -Math.PI / 2 + Math.PI / total;
-  const theta = angleOffset + (index / total) * Math.PI * 2;
-  return { x: Math.cos(theta) * radius, y: Math.sin(theta) * radius };
+  const slots = ORGANIC_SLOTS[agent.type];
+  const slot = slots[index % slots.length];
+
+  if (total <= slots.length) {
+    return slot;
+  }
+
+  const theta = seededAngle(agent.name);
+  const jitter = agent.type === "specialist" ? 0.08 : 0.06;
+  return {
+    x: clamp(slot.x + Math.cos(theta) * jitter, -1, 1),
+    y: clamp(slot.y + Math.sin(theta) * jitter, -1, 1),
+  };
+}
+
+function seededAngle(value: string) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return (hash / 0xffffffff) * Math.PI * 2;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }

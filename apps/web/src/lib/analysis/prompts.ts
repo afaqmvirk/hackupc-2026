@@ -45,7 +45,7 @@ export const swarmAgents: SwarmAgent[] = [
   {
     name: "Skeptical User",
     type: "persona",
-    role: "React as a cautious user who worries about scams, unclear terms, and exaggerated claims.",
+    role: "React as a cautious user who worries about scams, unclear terms, exaggerated claims, and whether the advertiser feels legitimate.",
   },
   {
     name: "Reward-Seeking User",
@@ -58,14 +58,14 @@ export const swarmAgents: SwarmAgent[] = [
     role: "React as a user who wants to understand exactly what happens after tapping and whether the action is worth the effort.",
   },
   {
-    name: "Visual Trend Seeker",
+    name: "Scam-Sensitive User",
     type: "persona",
-    role: "React as a user who notices polish, novelty, premium feel, and whether the creative looks modern or stale.",
+    role: "React as a user with a strong scam radar. Look for fake urgency, unrealistic rewards, suspicious money/prize claims, and missing proof.",
   },
   {
-    name: "Category-Matched User",
+    name: "Privacy-Conscious User",
     type: "persona",
-    role: "React as the audience implied by the campaign brief, adapting your motivation to category, region, platform, and objective.",
+    role: "React as a user who hesitates when an ad implies tracking, payment details, personal data, crypto, finance, gambling, or unclear app permissions.",
   },
 ];
 
@@ -90,7 +90,7 @@ export function agentPrompt(agent: SwarmAgent, evidence: EvidencePack) {
     "A 0.10 click probability means 10,000 clicks per 100,000 views; do not output values like 0.10 unless the evidence explicitly shows action rates at that scale.",
     "Use the evidence pack's behaviorPrior as calibration, but adapt it to your agent role without breaking the action-rate scale.",
     "Most probability mass should usually be in skip, ignore, inspect, and exit. Small visual differences should move inspect/skip/ignore more than click/convert.",
-    "Do not copy the same click/convert probabilities across personas. Role should create small but visible differences around the evidence anchor: low-attention and skeptical users are lower action-rate profiles, reward-seeking users inspect and tap more when the offer is concrete, practical converters convert more only when the next step is clear, and visual trend seekers mostly shift inspect/ignore unless novelty is strong.",
+    "Do not copy the same click/convert probabilities across personas. Role should create small but visible differences around the evidence anchor: low-attention, skeptical, scam-sensitive, and privacy-conscious users are lower action-rate profiles; reward-seeking users inspect and tap more when the offer is concrete; practical converters convert more only when the next step is clear.",
     "Keep those persona differences logical and bounded: usually about 0.5x to 1.8x of the evidence action-rate anchor, not arbitrary large percentages.",
     personaBehaviorGuidance(agent),
     "Do not strongly contradict behaviorPrior unless the evidence pack contains a concrete reason. Role-specific risk should usually appear as probability shifts and rationale, not an unsupported reversal of the primary state.",
@@ -158,7 +158,7 @@ export function imageOnlyAgentPrompt({
     "In image-only mode there is no campaign history, so keep tap/click probability conservative and conversion probability much smaller than click probability.",
     "Do not use 0.10 as a default click probability. That would mean 10,000 clicks per 100,000 views, which is not a conservative visual pre-test estimate.",
     "Most probability mass should usually be in skip, ignore, inspect, and exit. Reward, novelty, and clarity may raise inspect first; only very strong visible evidence should modestly raise click or convert.",
-    "Do not copy the same click/convert probabilities across personas. Let the role create realistic differences: low-attention and skeptical profiles are lower action-rate profiles; reward-seeking users inspect and tap more when the offer is visible; practical converters convert more only if the post-tap value is clear; visual trend seekers mostly shift inspect/ignore unless the creative feels fresh.",
+    "Do not copy the same click/convert probabilities across personas. Let the role create realistic differences: low-attention, skeptical, scam-sensitive, and privacy-conscious profiles are lower action-rate profiles; reward-seeking users inspect and tap more when the offer is visible; practical converters convert more only if the post-tap value is clear.",
     personaBehaviorGuidance(agent),
     "Explain behavior.rationale in user terms, for example why someone would skip, inspect, click, convert, or exit.",
     "Do not claim real users actually behaved this way. This is a visual pre-test simulation from the attached image.",
@@ -196,10 +196,10 @@ function personaBehaviorGuidance(agent: SwarmAgent) {
       return "Persona calibration: Reward-Seeking User may raise inspect and slightly raise click when the reward is concrete, but conversion still needs trust and low friction.";
     case "Practical Converter":
       return "Persona calibration: Practical Converter may raise convert only when the post-tap value and next step are explicit; otherwise shift probability into inspect or exit.";
-    case "Visual Trend Seeker":
-      return "Persona calibration: Visual Trend Seeker should mostly shift inspect/ignore based on polish and novelty; visual appeal alone is not a high click rate.";
-    case "Category-Matched User":
-      return "Persona calibration: Category-Matched User should stay close to the campaign and evidence baseline, adjusting modestly for category fit.";
+    case "Scam-Sensitive User":
+      return "Persona calibration: Scam-Sensitive User should strongly penalize unrealistic rewards, fake urgency, money/prize claims, missing brand proof, and unreadable terms by shifting probability into skip/exit.";
+    case "Privacy-Conscious User":
+      return "Persona calibration: Privacy-Conscious User should penalize unclear data, payment, finance, gambling, crypto, permission, or account-creation implications by shifting probability into inspect or exit.";
     case "Performance Marketer":
       return "Specialist calibration: Performance Marketer should treat directResponseIntent as the hard business-action score; strong aesthetics do not compensate for a missing product, offer, or CTA.";
     default:

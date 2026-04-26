@@ -51,8 +51,6 @@ export function useSwarmStream() {
     setMessages([]);
     setPhase("analyzing");
 
-    let resultsWindow = openWaitingResultsWindow();
-
     try {
       const createResponse = await fetch("/api/experiments", {
         method: "POST",
@@ -71,11 +69,6 @@ export function useSwarmStream() {
       }
 
       const experimentId = createPayload.experiment.id;
-      writeResultsWindowStatus(
-        resultsWindow,
-        "Gemini swarm is analyzing",
-        "Keep this tab open. Results will load here when the swarm completes.",
-      );
 
       const analyzeResponse = await fetch(`/api/experiments/${experimentId}/analyze`, {
         method: "POST",
@@ -127,20 +120,11 @@ export function useSwarmStream() {
       const resultsUrl = `/experiments/${experimentId}/results`;
       setCompletedResultsUrl(resultsUrl);
       setPhase("complete");
-
-      if (resultsWindow && !resultsWindow.closed) {
-        resultsWindow.location.href = resultsUrl;
-      } else {
-        resultsWindow = window.open(resultsUrl, "_blank", "noopener,noreferrer");
-        if (!resultsWindow) {
-          window.location.href = resultsUrl;
-        }
-      }
+      window.location.assign(resultsUrl);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Analysis failed.";
       setError(message);
       setPhase("error");
-      writeResultsWindowStatus(resultsWindow, "Analysis failed", message);
     }
   }, []);
 
@@ -154,42 +138,4 @@ export function useSwarmStream() {
     reset,
     startAnalysis,
   };
-}
-
-function openWaitingResultsWindow() {
-  const popup = window.open("about:blank", "_blank");
-  writeResultsWindowStatus(
-    popup,
-    "Preparing Gemini swarm",
-    "The results page will appear here when analysis completes.",
-  );
-  return popup;
-}
-
-function writeResultsWindowStatus(target: Window | null, title: string, message: string) {
-  if (!target || target.closed) return;
-
-  try {
-    target.document.title = title;
-    target.document.body.innerHTML = `
-      <main style="min-height:100vh;margin:0;display:grid;place-items:center;background:#070912;color:#f6f6fb;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-        <section style="width:min(520px,calc(100vw - 48px));border:1px solid rgba(199,183,255,.16);border-radius:16px;background:#111626;padding:24px;box-shadow:0 24px 80px rgba(0,0,0,.32);">
-          <p style="margin:0 0 8px;color:#9d64f6;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;">Creative Swarm Copilot</p>
-          <h1 style="margin:0;color:#f6f6fb;font-size:22px;line-height:1.25;">${escapeHtml(title)}</h1>
-          <p style="margin:12px 0 0;color:#c9c3dd;font-size:14px;line-height:1.6;">${escapeHtml(message)}</p>
-        </section>
-      </main>
-    `;
-  } catch {
-    // Some browsers restrict writes to newly opened windows; navigation fallback still works.
-  }
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

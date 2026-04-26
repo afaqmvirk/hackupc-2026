@@ -23,7 +23,6 @@ import {
 import { RevealStage } from "@/components/war-room/RevealStage";
 import {
   type AgentReview,
-  type AnalysisInputMode,
   type CampaignBrief,
   type CopilotAnswer,
   type CreativeDoc,
@@ -40,7 +39,6 @@ type ResultsDashboardProps = {
   report: FinalReport | null;
   creatives: CreativeDoc[];
   brief: CampaignBrief;
-  analysisInputMode: AnalysisInputMode;
   agentReviews?: AgentReview[];
 };
 
@@ -125,7 +123,6 @@ export function ResultsDashboard({
   report,
   creatives,
   brief,
-  analysisInputMode,
   agentReviews = [],
 }: ResultsDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>("compare");
@@ -185,7 +182,7 @@ export function ResultsDashboard({
 
       {activeTab === "compare" ? <CompareTab views={views} /> : null}
       {activeTab === "personas" ? <PersonasTab views={views} agentReviews={agentReviews} /> : null}
-      {activeTab === "fatigue" ? <FatigueTab views={views} analysisInputMode={analysisInputMode} /> : null}
+      {activeTab === "fatigue" ? <FatigueTab views={views} /> : null}
 
       <CopilotPanel report={report} creatives={creatives} brief={brief} />
     </section>
@@ -416,7 +413,7 @@ function PersonasTab({ views, agentReviews }: { views: VariantView[]; agentRevie
   );
 }
 
-function FatigueTab({ views, analysisInputMode }: { views: VariantView[]; analysisInputMode: AnalysisInputMode }) {
+function FatigueTab({ views }: { views: VariantView[] }) {
   const hasFatigue = views.some((view) => view.fatigue);
   const decayViews = views.filter((view) => view.decayCurve);
 
@@ -424,13 +421,7 @@ function FatigueTab({ views, analysisInputMode }: { views: VariantView[]; analys
     return (
       <section className="rounded-[16px] border border-[var(--pp-border)] bg-pp-panel p-4 shadow-panel">
         <SectionHeader icon={<Activity className="size-4" />} title="Fatigue forecast" />
-        <EmptyPanel
-          message={
-            analysisInputMode === "image_only"
-              ? "Fatigue values are only computed in KPI-backed mode because they use historical decay and similar-creative signals."
-              : "No fatigue profiles were returned for this run."
-          }
-        />
+        <EmptyPanel message="No fatigue profiles were returned for this run." />
       </section>
     );
   }

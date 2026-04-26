@@ -836,7 +836,7 @@ function AnalysisRedirectPanel({ resultsUrl, isAnalyzing }: { resultsUrl: string
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-2">
           {isAnalyzing ? <Loader2 className="size-4 animate-spin text-pp-violet" /> : <FlaskConical className="size-4 text-pp-violet" />}
-          <h2 className="text-sm font-semibold text-pp-white">Results Handoff</h2>
+          <h2 className="text-sm font-semibold text-pp-white">Results Redirect</h2>
         </div>
         {resultsUrl ? (
           <a
@@ -852,10 +852,10 @@ function AnalysisRedirectPanel({ resultsUrl, isAnalyzing }: { resultsUrl: string
       </div>
       <p className="mt-3 text-sm text-pp-secondary">
         {isAnalyzing
-          ? "The War Room stays live while Gemini runs. The separate results tab will load after the final report is saved."
+          ? "The War Room stays live while Gemini runs. This page will move to results after the final report is saved."
           : resultsUrl
-            ? "The completed report is available on its own page."
-            : "Select 2-6 variants and run the Gemini swarm to open a separate results page."}
+            ? "The completed report is ready and this page is redirecting."
+            : "Select 2-6 variants and run the Gemini swarm to analyze before opening results."}
       </p>
     </section>
   );
@@ -879,8 +879,8 @@ function personaIconFor(agentName: string) {
     "Skeptical User": "/icons/Artboard%207%20copy.png",
     "Reward-Seeking User": "/icons/Artboard%207%20copy%202.png",
     "Practical Converter": "/icons/Artboard%207%20copy%203.png",
-    "Visual Trend Seeker": "/icons/Artboard%207%20copy%204.png",
-    "Category-Matched User": "/icons/Artboard%207%20copy%205.png",
+    "Scam-Sensitive User": "/icons/Artboard%207%20copy%204.png",
+    "Privacy-Conscious User": "/icons/Artboard%207%20copy%205.png",
   };
 
   return icons[agentName] ?? "/icons/Artboard%207.png";

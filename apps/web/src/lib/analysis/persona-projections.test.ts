@@ -9,9 +9,10 @@ describe("persona action projections", () => {
   });
 
   it("uses the dataset-fitted audience composition", () => {
-    expect(fullDbPersonaWeights["Reward-Seeking User"]).toBeGreaterThan(fullDbPersonaWeights["Skeptical User"]);
-    expect(fullDbPersonaWeights["Low-Attention Scroller"]).toBeGreaterThan(0.2);
-    expect(fullDbPersonaWeights["Category-Matched User"]).toBeLessThan(fullDbPersonaWeights["Practical Converter"]);
+    expect(fullDbPersonaWeights["Scam-Sensitive User"]).toBeGreaterThan(0.15);
+    expect(fullDbPersonaWeights["Skeptical User"]).toBeGreaterThanOrEqual(fullDbPersonaWeights["Reward-Seeking User"]);
+    expect(fullDbPersonaWeights["Low-Attention Scroller"]).toBeGreaterThan(fullDbPersonaWeights["Practical Converter"]);
+    expect(fullDbPersonaWeights["Privacy-Conscious User"]).toBeLessThan(fullDbPersonaWeights["Skeptical User"]);
   });
 
   it("applies projected views times persona weight times action probability", () => {

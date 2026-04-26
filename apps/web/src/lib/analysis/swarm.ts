@@ -188,6 +188,7 @@ async function analyzeExperimentWithImageOnlySwarm({
   }));
   const publicToActual = new Map(publicVariants.map((variant) => [variant.publicId, variant.actualId]));
   const reviews: AgentReview[] = [];
+  const decayCurves: SimulatedDecayCurve[] = [];
 
   onEvent?.({
     type: "status",
@@ -246,14 +247,33 @@ async function analyzeExperimentWithImageOnlySwarm({
 
   const remappedReviews = reviews.map((review) => remapReviewVariantId(review, publicToActual));
   const remappedReport = remapReportVariantIds(generatedReport, publicToActual);
+  onEvent?.({
+    type: "status",
+    message: "Computing visual-only fatigue forecasts from uploaded creative features.",
+  });
+
+  decayCurves.push(...(await Promise.all(variants.map((variant) => simulateDecay(variant)))));
+  await onEvent?.({ type: "decay", curves: decayCurves });
+
+  const fatiguePacks = variants.map((variant, index) =>
+    buildVisualOnlyFatiguePack({
+      variant,
+      brief,
+      index,
+      decayCurve: decayCurves[index],
+    }),
+  );
+  const fatigueProfiles = variants.map((variant, index) =>
+    computeFatigueProfile(variant, fatiguePacks[index], new Map()),
+  );
   const report: FinalReport = {
     ...attachPersonaActionForecast({
-      report: applyBehaviorAggregates(remappedReport, remappedReviews),
+      report: addDecaySignalsToReport(applyBehaviorAggregates(remappedReport, remappedReviews), decayCurves),
       reviews: remappedReviews,
       projectedViews,
     }),
-    fatigueProfiles: [],
-    decayCurves: [],
+    fatigueProfiles,
+    decayCurves,
   };
 
   await onEvent?.({ type: "report", report });
@@ -261,8 +281,63 @@ async function analyzeExperimentWithImageOnlySwarm({
   return {
     evidencePacks: [],
     reviews: remappedReviews,
-    decayCurves: [],
+    decayCurves,
     report,
+  };
+}
+
+function buildVisualOnlyFatiguePack({
+  variant,
+  brief,
+  index,
+  decayCurve,
+}: {
+  variant: CreativeDoc;
+  brief: CampaignBrief;
+  index: number;
+  decayCurve: SimulatedDecayCurve;
+}): EvidencePack {
+  return {
+    variantId: variant.id,
+    variantLabel: variant.label ?? `Variant ${index + 1}`,
+    campaignContext: brief,
+    creative: variant,
+    benchmark: {
+      contextLabel: "Visual-only pre-test",
+      sampleSize: 0,
+      avgCtr: null,
+      avgCvr: null,
+      avgPerfScore: null,
+      avgCtrDecayPct: null,
+      highPerformerCount: 0,
+      fatiguedCount: 0,
+      underperformerCount: 0,
+      stableCount: 0,
+      topPerformerRate: 0,
+      underperformerRate: 0,
+      fatiguedRate: 0,
+      stableRate: 0,
+    },
+    similarCreatives: [],
+    behaviorPrior: {
+      source: "benchmark",
+      datasetSentiment: "neutral",
+      probabilityHints: {
+        skip: 0.48,
+        ignore: 0.26,
+        inspect: 0.24,
+        click: 0.006,
+        convert: 0.0006,
+        exit: 0.0134,
+      },
+      drivers: ["Visual-only mode uses conservative pre-test behavior anchors without historical campaign evidence."],
+    },
+    facts: [
+      "Visual-only fatigue forecast uses extracted creative features and local decay simulation.",
+      `Simulated 30% CTR-drop day: ${decayCurve.fatiguePredictionDay}.`,
+    ],
+    warnings: ["No historical KPI benchmarks or similar-creative retrieval were used for this fatigue estimate."],
+    decayCurve,
   };
 }
 
@@ -567,10 +642,11 @@ function applyPersonaBehaviorShape(
 
 function personaBehaviorTrait(review: AgentReview, pack?: EvidencePack) {
   const features = pack?.creative.features;
-  const hasVisibleOffer = Boolean(features?.hasReward || features?.hasPrice || /reward|bonus|offer|free|discount|claim/i.test(review.reasoning));
+  const visibleText = `${features?.ocrText ?? ""} ${features?.headline ?? ""} ${features?.subhead ?? ""} ${features?.ctaText ?? ""} ${review.reasoning}`;
+  const hasVisibleOffer = Boolean(features?.hasReward || features?.hasPrice || /reward|bonus|offer|free|discount|claim/i.test(visibleText));
   const hasClearCta = Boolean((features?.ctaText ?? "").trim()) || /cta|button|tap|claim|install|play|get|shop|order/i.test(review.reasoning);
-  const novelty = features?.noveltyScore ?? 0.5;
-  const clutter = features?.visualClutter ?? 0.5;
+  const hasRiskyClaim = /win|winner|prize|jackpot|cash|money|crypto|loan|invest|guaranteed|limited|urgent|today only|free|claim/i.test(visibleText);
+  const hasDataOrPaymentConcern = /privacy|data|track|permission|account|sign up|card|bank|payment|crypto|wallet|loan|invest|casino|bet|lottery/i.test(visibleText);
   const trustIsWeak = review.trust < 5.5;
   const clarityIsStrong = review.clarity >= 7 || hasClearCta;
 
@@ -587,6 +663,28 @@ function personaBehaviorTrait(review: AgentReview, pack?: EvidencePack) {
         convertMultiplier: trustIsWeak ? 0.42 : 0.76,
         deltas: { skip: 0.045, ignore: 0.02, inspect: -0.02, exit: trustIsWeak ? 0.08 : 0.045 },
       };
+    case "Scam-Sensitive User":
+      return {
+        clickMultiplier: hasRiskyClaim || trustIsWeak ? 0.42 : 0.68,
+        convertMultiplier: hasRiskyClaim || trustIsWeak ? 0.32 : 0.62,
+        deltas: {
+          skip: hasRiskyClaim ? 0.085 : 0.045,
+          ignore: 0.01,
+          inspect: hasRiskyClaim ? -0.045 : -0.015,
+          exit: hasRiskyClaim || trustIsWeak ? 0.105 : 0.055,
+        },
+      };
+    case "Privacy-Conscious User":
+      return {
+        clickMultiplier: hasDataOrPaymentConcern || trustIsWeak ? 0.54 : 0.76,
+        convertMultiplier: hasDataOrPaymentConcern || trustIsWeak ? 0.36 : 0.7,
+        deltas: {
+          skip: hasDataOrPaymentConcern ? 0.04 : 0.02,
+          ignore: 0.015,
+          inspect: hasDataOrPaymentConcern ? 0.045 : 0.02,
+          exit: hasDataOrPaymentConcern || trustIsWeak ? 0.075 : 0.035,
+        },
+      };
     case "Reward-Seeking User":
       return {
         clickMultiplier: hasVisibleOffer ? 1.72 : 1.18,
@@ -598,18 +696,6 @@ function personaBehaviorTrait(review: AgentReview, pack?: EvidencePack) {
         clickMultiplier: clarityIsStrong ? 0.98 : 0.76,
         convertMultiplier: clarityIsStrong && !trustIsWeak ? 1.52 : 0.82,
         deltas: { skip: clarityIsStrong ? -0.025 : 0.035, inspect: 0.045, exit: clarityIsStrong && !trustIsWeak ? -0.025 : 0.055 },
-      };
-    case "Visual Trend Seeker":
-      return {
-        clickMultiplier: novelty >= 0.7 ? 1.28 : novelty <= 0.35 || clutter >= 0.7 ? 0.72 : 1.02,
-        convertMultiplier: 0.72,
-        deltas: { skip: novelty >= 0.7 ? -0.045 : 0.015, ignore: clutter >= 0.7 ? 0.055 : -0.01, inspect: 0.07, exit: 0.005 },
-      };
-    case "Category-Matched User":
-      return {
-        clickMultiplier: review.conversionIntent >= 7 ? 1.22 : review.conversionIntent <= 4 ? 0.78 : 1,
-        convertMultiplier: review.conversionIntent >= 7 && !trustIsWeak ? 1.28 : review.conversionIntent <= 4 ? 0.72 : 1,
-        deltas: { skip: review.conversionIntent >= 7 ? -0.04 : 0.025, inspect: 0.035, exit: trustIsWeak ? 0.035 : -0.005 },
       };
     default:
       return {

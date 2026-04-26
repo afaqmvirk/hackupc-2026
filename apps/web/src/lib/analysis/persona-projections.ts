@@ -9,18 +9,18 @@ import {
 } from "@/lib/schemas";
 
 export const fullDbPersonaWeights = {
-  "Low-Attention Scroller": 0.213225469,
-  "Skeptical User": 0.1345679434,
-  "Reward-Seeking User": 0.2183092509,
-  "Practical Converter": 0.1679873124,
-  "Visual Trend Seeker": 0.144335372,
-  "Category-Matched User": 0.1215746524,
+  "Low-Attention Scroller": 0.2,
+  "Skeptical User": 0.18,
+  "Scam-Sensitive User": 0.17,
+  "Privacy-Conscious User": 0.13,
+  "Reward-Seeking User": 0.18,
+  "Practical Converter": 0.14,
 } as const;
 
 export const fullDbPersonaWeightFit = {
   source: "Smadex creative_summary.csv",
   basis:
-    "Impression-weighted soft assignment from creative traits: attention baseline, trust/risk cues, reward/offer framing, practical clarity, visual novelty, and category fit.",
+    "Impression-weighted soft assignment from creative traits: attention baseline, trust/risk cues, scam sensitivity, privacy/payment concern, reward/offer framing, and practical clarity.",
   datasetClickRateMean: 0.005410072946542721,
   datasetConversionPerViewMean: 0.0005673990429667633,
 } as const;

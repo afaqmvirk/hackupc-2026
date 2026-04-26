@@ -49,7 +49,6 @@ export default async function ExperimentResultsPage({ params }: { params: Promis
           report={experiment.report ?? null}
           creatives={experiment.variants}
           brief={experiment.brief}
-          analysisInputMode={experiment.analysisInputMode ?? "evidence"}
           agentReviews={experiment.agentReviews ?? []}
         />
       </div>

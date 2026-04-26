@@ -83,6 +83,16 @@ describe("evidence-mode behavior prompts", () => {
     expect(prompt).toContain("A 0.10 click probability means 10,000 clicks per 100,000 views");
     expect(prompt).toContain("Reward-Seeking User may raise inspect and slightly raise click");
   });
+
+  it("includes trust and scam-aware persona guidance", () => {
+    const scamPrompt = agentPrompt(swarmAgents.find((agent) => agent.name === "Scam-Sensitive User")!, evidencePack());
+    const privacyPrompt = agentPrompt(swarmAgents.find((agent) => agent.name === "Privacy-Conscious User")!, evidencePack());
+
+    expect(scamPrompt).toContain("Scam-Sensitive User should strongly penalize unrealistic rewards");
+    expect(scamPrompt).toContain("fake urgency");
+    expect(privacyPrompt).toContain("Privacy-Conscious User should penalize unclear data");
+    expect(privacyPrompt).toContain("payment");
+  });
 });
 
 function evidencePack(): EvidencePack {
