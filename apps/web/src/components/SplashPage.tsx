@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -81,19 +82,14 @@ function PurplePagesMark({ className }: { className?: string }) {
 function PurplePagesHeroLogo() {
   return (
     <div className="relative flex h-[220px] w-[360px] max-w-[84vw] items-center justify-center">
-      <div className="absolute left-6 top-12 flex h-28 w-12 items-stretch gap-2">
-        <span className="w-1.5 bg-white" />
-        <span className="w-1.5 bg-white" />
-        <span className="w-1.5 bg-white" />
-        <span className="w-1.5 bg-white" />
-      </div>
-      <div className="absolute left-[84px] top-8 h-36 w-52 border-[6px] border-white/95 border-b-0" />
-      <div className="absolute bottom-7 right-14 h-[6px] w-36 bg-white" />
-      <h1 className="relative z-10 text-left text-5xl font-black leading-[0.96] tracking-[0] text-white sm:text-6xl">
-        Purple
-        <br />
-        Pages
-      </h1>
+      <Image
+        src="/logo/purple_pages_logo.png"
+        alt="Purple Pages"
+        fill
+        priority
+        sizes="(max-width: 640px) 84vw, 360px"
+        className="object-contain"
+      />
     </div>
   );
 }
