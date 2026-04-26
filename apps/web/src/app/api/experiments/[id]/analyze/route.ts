@@ -3,7 +3,7 @@ import { getExperiment, saveExperiment } from "@/lib/data/repository";
 import { experimentSchema } from "@/lib/schemas";
 import { z } from "zod";
 
-export const maxDuration = 480;
+export const maxDuration = 300;
 
 const analyzeRequestSchema = z.object({
   experiment: experimentSchema.optional(),
