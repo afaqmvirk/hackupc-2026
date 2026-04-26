@@ -6,6 +6,10 @@ loadRootEnv();
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
+  outputFileTracingRoot: path.resolve(process.cwd(), "../.."),
+  outputFileTracingIncludes: {
+    "/api/:path*": ["../../Smadex_Creative_Intelligence_Dataset_FULL/**/*"],
+  },
 };
 
 export default nextConfig;

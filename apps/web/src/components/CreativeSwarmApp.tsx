@@ -93,7 +93,16 @@ export function CreativeSwarmApp() {
     url.searchParams.set("limit", "120");
 
     fetch(url)
-      .then((response) => response.json())
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as Catalog | { error?: string } | null;
+        if (!response.ok) {
+          throw new Error(payload && "error" in payload ? (payload.error ?? "Failed to load catalog.") : "Failed to load catalog.");
+        }
+        if (!payload) {
+          throw new Error("Catalog response was empty.");
+        }
+        return payload as Catalog;
+      })
       .then((data) => setCatalog(data))
       .catch((err) => setAppError(err instanceof Error ? err.message : "Failed to load catalog."));
   }, [campaignFilter]);
